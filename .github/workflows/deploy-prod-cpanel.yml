@@ -1,0 +1,117 @@
+name: Deploy to cPanel via SSH (manual Production)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: cpanel-deploy
+  cancel-in-progress: true
+
+env:
+  PROD_SFTP_HOST: ${{ secrets.PROD_SFTP_HOST }}
+  PROD_SFTP_PORT: ${{ secrets.PROD_SFTP_PORT }}
+  PROD_SFTP_USER: ${{ secrets.PROD_SFTP_USER }}
+  # Absolute path recommended, e.g. /home/cpaneluser/public_html — relative public_html also works (under SSH home).
+  PROD_SFTP_REMOTE_ROOT: ${{ secrets.PROD_SFTP_REMOTE_ROOT }}
+  SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install
+
+      - name: Create web .env from secrets
+        working-directory: web
+        run: |
+          printf 'VITE_API_URL=%s\nVITE_APP_NAME=%s\n' \
+            "${{ secrets.VITE_API_URL }}" \
+            "${{ secrets.VITE_APP_NAME }}" \
+            > .env
+
+      - name: Build web
+        working-directory: web
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -d web/dist || (echo "web/dist missing — build failed" && exit 1)
+          echo "Build ready: $(find web/dist -type f | wc -l) files in web/dist"
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key > ~/.ssh/deploy_key.pub 2>/tmp/ssh-keygen.err; then
+            echo "::error::PROD_SSH_PRIVATE_KEY is invalid or passphrase-protected."
+            echo "Fix: generate a deploy key WITHOUT a passphrase and paste the full PEM into GitHub Secrets."
+            cat /tmp/ssh-keygen.err
+            exit 1
+          fi
+
+          ssh-keyscan -p "${PROD_SFTP_PORT}" "${PROD_SFTP_HOST}" >> ~/.ssh/known_hosts
+          echo "SSH key loaded and validated"
+          echo "Deploy key fingerprint (must match Authorized Keys in cPanel):"
+          ssh-keygen -lf ~/.ssh/deploy_key.pub
+          echo "Deploy key public line (paste into cPanel → SSH Access → Manage SSH Keys → Import → Authorize):"
+          cat ~/.ssh/deploy_key.pub
+
+      - name: Test SSH connection
+        run: |
+          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
+          if ! ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
+            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
+            "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} and ${REMOTE_ROOT}/api\""; then
+            echo "::error::SSH login rejected. The private key in GitHub Secrets is valid, but cPanel has not authorized its public key for PROD_SFTP_USER."
+            echo "Fix in cPanel: Security → SSH Access → Manage SSH Keys → Import the public key from the Setup SSH key step above → click Authorize."
+            echo "Also verify PROD_SFTP_USER, PROD_SFTP_HOST, and PROD_SFTP_PORT match your cPanel SSH login."
+            exit 1
+          fi
+
+      - name: Deploy web/dist to public_html via rsync
+        run: |
+          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
+          rsync -avz --delete \
+            --exclude='.env' \
+            --include='.env.example' \
+            --exclude='.env.*' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PROD_SFTP_PORT} ${SSH_OPTS}" \
+            web/dist/ \
+            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}:${REMOTE_ROOT}/"
+
+      # server-php/ in repo → public_html/api/ on cPanel
+      - name: Deploy server-php to public_html/api via rsync
+        run: |
+          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
+          rsync -avz --delete \
+            --include='.htaccess' \
+            --exclude='.env' \
+            --include='.env.example' \
+            --exclude='.env.*' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PROD_SFTP_PORT} ${SSH_OPTS}" \
+            server-php/ \
+            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}:${REMOTE_ROOT}/api/"
+
+      - name: Fix file permissions via SSH
+        run: |
+          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
+          ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
+            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
+            "find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && echo 'Permissions fixed' && echo 'Deploy complete'"
