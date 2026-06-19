@@ -1,0 +1,15 @@
+RewriteEngine On
+RewriteBase /api/
+
+# Block direct access to sensitive paths
+RewriteRule ^(database|lib|writable)/ - [F,L]
+
+<FilesMatch "^\.env">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+</FilesMatch>
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
