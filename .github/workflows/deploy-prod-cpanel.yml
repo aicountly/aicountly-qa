@@ -11,7 +11,7 @@ env:
   PROD_SFTP_HOST: ${{ secrets.PROD_SFTP_HOST }}
   PROD_SFTP_PORT: ${{ secrets.PROD_SFTP_PORT }}
   PROD_SFTP_USER: ${{ secrets.PROD_SFTP_USER }}
-  # Absolute path recommended, e.g. /home/cpaneluser/public_html — relative public_html also works (under SSH home).
+  # Set PROD_SFTP_REMOTE_ROOT to your cPanel public_html path, e.g. /home/user/public_html or public_html
   PROD_SFTP_REMOTE_ROOT: ${{ secrets.PROD_SFTP_REMOTE_ROOT }}
   SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
 
@@ -46,7 +46,9 @@ jobs:
       - name: Verify build output
         run: |
           test -d web/dist || (echo "web/dist missing — build failed" && exit 1)
+          test -d server-php || (echo "server-php/ missing in repo" && exit 1)
           echo "Build ready: $(find web/dist -type f | wc -l) files in web/dist"
+          echo "API ready: $(find server-php -type f | wc -l) files in server-php/"
 
       - name: Setup SSH key
         env:
@@ -74,6 +76,9 @@ jobs:
       - name: Test SSH connection
         run: |
           REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
+          echo "Deploy map:"
+          echo "  web/dist/     → ${REMOTE_ROOT}/          (public_html)"
+          echo "  server-php/   → ${REMOTE_ROOT}/api/      (cPanel api folder)"
           if ! ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
             "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
             "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} and ${REMOTE_ROOT}/api\""; then
@@ -87,6 +92,7 @@ jobs:
         run: |
           REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
           rsync -avz --delete \
+            --exclude='api/' \
             --exclude='.env' \
             --include='.env.example' \
             --exclude='.env.*' \
@@ -112,4 +118,4 @@ jobs:
           REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
             "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
-            "find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && echo 'Permissions fixed' && echo 'Deploy complete'"
+            "find \"${REMOTE_ROOT}\" -maxdepth 1 -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && echo 'Permissions fixed' && echo 'Deploy complete: web/dist → public_html, server-php → api/'"
