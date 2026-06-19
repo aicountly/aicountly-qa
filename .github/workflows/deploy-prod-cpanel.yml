@@ -8,12 +8,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PROD_SFTP_HOST: ${{ secrets.PROD_SFTP_HOST }}
-  PROD_SFTP_PORT: ${{ secrets.PROD_SFTP_PORT }}
-  PROD_SFTP_USER: ${{ secrets.PROD_SFTP_USER }}
-  # Set PROD_SFTP_REMOTE_ROOT to your cPanel public_html path, e.g. /home/user/public_html or public_html
-  PROD_SFTP_REMOTE_ROOT: ${{ secrets.PROD_SFTP_REMOTE_ROOT }}
-  SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+  CPANEL_SSH_HOST: ${{ secrets.PROD_SFTP_HOST }}
+  CPANEL_SSH_PORT: ${{ secrets.PROD_SFTP_PORT }}
+  CPANEL_SSH_USER: ${{ secrets.PROD_SFTP_USER }}
+  # PROD_SFTP_REMOTE_ROOT → cPanel public_html (e.g. public_html or /home/user/public_html)
+  CPANEL_REMOTE_ROOT: ${{ secrets.PROD_SFTP_REMOTE_ROOT }}
+  SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
 
 jobs:
   deploy:
@@ -22,17 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify project layout
-        run: |
-          test -f web/package.json || (echo "::error::web/package.json missing — add the web app before deploying" && exit 1)
-          test -d server-php || (echo "::error::server-php/ missing — add the API before deploying" && exit 1)
-
-      - name: Setup Node
+      - name: Setup Node (with cache)
+        if: hashFiles('web/package-lock.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      - name: Setup Node
+        if: hashFiles('web/package-lock.json') == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Install web dependencies
         working-directory: web
@@ -53,27 +55,38 @@ jobs:
       - name: Verify build output
         run: |
           test -d web/dist || (echo "web/dist missing — build failed" && exit 1)
-          test -d server-php || (echo "server-php/ missing in repo" && exit 1)
           echo "Build ready: $(find web/dist -type f | wc -l) files in web/dist"
-          echo "API ready: $(find server-php -type f | wc -l) files in server-php/"
+
+      - name: Verify server-php exists
+        run: |
+          test -d server-php || (echo "server-php/ missing — required for cPanel api/" && exit 1)
+          echo "server-php ready: $(find server-php -type f | wc -l) files"
 
       - name: Setup SSH key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY_B64: ${{ secrets.PROD_SSH_PRIVATE_KEY_B64 }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+
+          if [ -n "$SSH_PRIVATE_KEY_B64" ]; then
+            echo "$SSH_PRIVATE_KEY_B64" | tr -d '[:space:]' | base64 --decode | tr -d '\r' > ~/.ssh/deploy_key
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          fi
+
           chmod 600 ~/.ssh/deploy_key
 
           if ! ssh-keygen -y -f ~/.ssh/deploy_key > ~/.ssh/deploy_key.pub 2>/tmp/ssh-keygen.err; then
             echo "::error::PROD_SSH_PRIVATE_KEY is invalid or passphrase-protected."
-            echo "Fix: generate a deploy key WITHOUT a passphrase and paste the full PEM into GitHub Secrets."
+            echo "Fix: generate a deploy key WITHOUT a passphrase, paste the full PEM into GitHub Secrets,"
+            echo "or store a base64-encoded key in PROD_SSH_PRIVATE_KEY_B64 (recommended)."
             cat /tmp/ssh-keygen.err
             exit 1
           fi
 
-          ssh-keyscan -p "${PROD_SFTP_PORT}" "${PROD_SFTP_HOST}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "${CPANEL_SSH_PORT}" "${CPANEL_SSH_HOST}" >> ~/.ssh/known_hosts
           echo "SSH key loaded and validated"
           echo "Deploy key fingerprint (must match Authorized Keys in cPanel):"
           ssh-keygen -lf ~/.ssh/deploy_key.pub
@@ -82,47 +95,53 @@ jobs:
 
       - name: Test SSH connection
         run: |
-          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
-          echo "Deploy map:"
-          echo "  web/dist/     → ${REMOTE_ROOT}/          (public_html)"
-          echo "  server-php/   → ${REMOTE_ROOT}/api/      (cPanel api folder)"
-          if ! ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
-            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
-            "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} and ${REMOTE_ROOT}/api\""; then
+          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
+          if ! ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} \
+            "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}" \
+            "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} (public_html) and ${REMOTE_ROOT}/api\""; then
             echo "::error::SSH login rejected. The private key in GitHub Secrets is valid, but cPanel has not authorized its public key for PROD_SFTP_USER."
             echo "Fix in cPanel: Security → SSH Access → Manage SSH Keys → Import the public key from the Setup SSH key step above → click Authorize."
-            echo "Also verify PROD_SFTP_USER, PROD_SFTP_HOST, and PROD_SFTP_PORT match your cPanel SSH login."
+            echo "Also verify PROD_SFTP_USER, PROD_SFTP_HOST, PROD_SFTP_PORT, and PROD_SFTP_REMOTE_ROOT (public_html) match your cPanel SSH login."
             exit 1
           fi
 
-      - name: Deploy web/dist to public_html via rsync
+      # server-php/ in repo → public_html/api/ on cPanel (tar over SSH — cPanel often has no rsync)
+      - name: Deploy server-php to public_html/api via SSH
         run: |
-          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
-          rsync -avz --delete \
-            --exclude='api/' \
-            --exclude='.env' \
-            --include='.env.example' \
-            --exclude='.env.*' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${PROD_SFTP_PORT} ${SSH_OPTS}" \
-            web/dist/ \
-            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}:${REMOTE_ROOT}/"
+          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
 
-      # server-php/ in repo → public_html/api/ on cPanel
-      - name: Deploy server-php to public_html/api via rsync
-        run: |
-          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
-          rsync -avz --delete \
-            --include='.htaccess' \
+          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api\""
+          "${SSH_CMD[@]}" "find \"${REMOTE_ROOT}/api\" -mindepth 1 -delete 2>/dev/null || rm -rf \"${REMOTE_ROOT}/api\"/*"
+
+          tar -czf - \
             --exclude='.env' \
-            --include='.env.example' \
             --exclude='.env.*' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${PROD_SFTP_PORT} ${SSH_OPTS}" \
-            server-php/ \
-            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}:${REMOTE_ROOT}/api/"
+            -C server-php . | "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && tar -xzf -"
+
+          echo "Deployed server-php → ${REMOTE_ROOT}/api"
+
+      # web/dist/ in repo → public_html/ on cPanel (preserve api/ folder)
+      - name: Deploy web/dist to public_html via SSH
+        run: |
+          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
+
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}\" && find . -maxdepth 1 ! -name . ! -name .. ! -name api -exec rm -rf {} +"
+
+          tar -czf - \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            -C web/dist . | "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}\" && tar -xzf -"
+
+          echo "Deployed web/dist → ${REMOTE_ROOT} (api/ preserved)"
 
       - name: Fix file permissions via SSH
         run: |
-          REMOTE_ROOT="${PROD_SFTP_REMOTE_ROOT%/}"
-          ssh -i ~/.ssh/deploy_key -p "${PROD_SFTP_PORT}" ${SSH_OPTS} \
-            "${PROD_SFTP_USER}@${PROD_SFTP_HOST}" \
-            "find \"${REMOTE_ROOT}\" -maxdepth 1 -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && echo 'Permissions fixed' && echo 'Deploy complete: web/dist → public_html, server-php → api/'"
+          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
+          ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} \
+            "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}" \
+            "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
+             find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && \
+             find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && \
+             echo 'Permissions fixed' && echo 'Deploy complete: web/dist → public_html, server-php → public_html/api'"
