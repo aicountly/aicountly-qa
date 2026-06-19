@@ -20,6 +20,7 @@ env:
 
 jobs:
   build:
+    if: hashFiles('web/package.json') != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,6 +30,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
         working-directory: web
@@ -62,6 +65,7 @@ jobs:
 
   deploy:
     needs: build
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       pages: write

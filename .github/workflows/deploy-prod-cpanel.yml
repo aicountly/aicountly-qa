@@ -22,10 +22,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify project layout
+        run: |
+          test -f web/package.json || (echo "::error::web/package.json missing — add the web app before deploying" && exit 1)
+          test -d server-php || (echo "::error::server-php/ missing — add the API before deploying" && exit 1)
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
         working-directory: web
