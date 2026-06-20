@@ -9,9 +9,9 @@ class OwnerSeeder extends Seeder
 {
     public function run(): void
     {
-        $email    = getenv('QA_OWNER_EMAIL') ?: 'owner@aicountly.org';
-        $name     = getenv('QA_OWNER_NAME')  ?: 'QA Owner';
-        $password = getenv('QA_OWNER_PASSWORD') ?: $this->randomPassword();
+        $email    = env('QA_OWNER_EMAIL') ?: 'owner@aicountly.org';
+        $name     = env('QA_OWNER_NAME') ?: 'QA Owner';
+        $password = env('QA_OWNER_PASSWORD') ?: $this->randomPassword();
 
         $existing = $this->db->table('qa_users')->where('email', $email)->get()->getRow();
         if ($existing) {
@@ -35,11 +35,17 @@ class OwnerSeeder extends Seeder
 
         $role = $this->db->table('qa_roles')->where('code', 'Owner')->get()->getRow();
         if ($role) {
-            $this->db->table('qa_user_roles')->ignore(true)->insert([
-                'user_id'    => $userId,
-                'role_id'    => $role->id,
-                'created_at' => $now,
-            ]);
+            $linked = $this->db->table('qa_user_roles')
+                ->where('user_id', $userId)
+                ->where('role_id', $role->id)
+                ->countAllResults() > 0;
+            if (! $linked) {
+                $this->db->table('qa_user_roles')->insert([
+                    'user_id'    => $userId,
+                    'role_id'    => $role->id,
+                    'created_at' => $now,
+                ]);
+            }
         }
 
         CLI::write("Seeded Owner user.", 'green');

@@ -104,6 +104,10 @@ jobs:
             echo "QA_REPORTS_DIR=../qa-reports"
             echo ""
             echo "QA_ALLOWED_ORIGINS=${{ secrets.QA_ALLOWED_ORIGINS }}"
+            echo ""
+            echo "QA_OWNER_EMAIL=${{ secrets.QA_OWNER_EMAIL }}"
+            echo "QA_OWNER_NAME=${{ secrets.QA_OWNER_NAME }}"
+            echo "QA_OWNER_PASSWORD=${{ secrets.QA_OWNER_PASSWORD }}"
           } > .env
           chmod 600 .env
           echo "Production .env written ($(wc -l < .env) lines)"
@@ -189,17 +193,24 @@ jobs:
           fi
           echo "writable OK: ${REMOTE_ROOT}/api/writable"
 
-      # migrate: safe every deploy (applies only pending migrations)
+      # migrate: applies pending migrations; seeders run only when migrate succeeds
       - name: Run database migrations
+        id: db_migrate
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark migrate"; then
-            echo "::warning::php spark migrate failed (PHP CLI may be locked down on this cPanel)"
+          echo "Running php spark migrate on ${REMOTE_ROOT}/api ..."
+          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark migrate 2>&1"; then
+            echo "::error::php spark migrate failed. Check QA_DB_* secrets and that PostgreSQL is reachable from cPanel (pdo_pgsql enabled for PHP CLI)."
+            echo "migrate_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
+          echo "migrate_ok=true" >> "$GITHUB_OUTPUT"
+          echo "Migrations complete."
 
       # seeders: once only — marker writable/.qa_seed_complete on the server
       - name: Run database seeders (first deploy only)
+        if: steps.db_migrate.outputs.migrate_ok == 'true'
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           MARKER="${REMOTE_ROOT}/api/writable/.qa_seed_complete"
@@ -211,12 +222,22 @@ jobs:
           fi
 
           echo "First deploy — running seeders..."
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed RolesSeeder"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed OwnerSeeder"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksTestDataPackSeeder"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksExpectedResultsSeeder"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed ValidationRulesSeeder"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed SettingsSeeder"
+          run_seed() {
+            local seeder="$1"
+            echo "--- php spark db:seed ${seeder} ---"
+            if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark db:seed ${seeder} 2>&1"; then
+              echo "::error::Seeder ${seeder} failed (see output above)."
+              exit 1
+            fi
+          }
+
+          run_seed RolesSeeder
+          run_seed OwnerSeeder
+          run_seed BooksTestDataPackSeeder
+          run_seed BooksExpectedResultsSeeder
+          run_seed ValidationRulesSeeder
+          run_seed SettingsSeeder
+
           "${SSH_CMD[@]}" "touch \"${MARKER}\" && chmod 644 \"${MARKER}\""
           echo "Seeders complete. Marker created — future deploys will skip seeding."
 

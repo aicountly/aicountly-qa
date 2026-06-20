@@ -16,11 +16,14 @@ class RolesSeeder extends Seeder
         ];
 
         $now = date('Y-m-d H:i:s');
-        foreach ($rows as &$row) {
+        foreach ($rows as $row) {
+            $exists = $this->db->table('qa_roles')->where('code', $row['code'])->countAllResults() > 0;
+            if ($exists) {
+                continue;
+            }
             $row['created_at'] = $now;
             $row['updated_at'] = $now;
+            $this->db->table('qa_roles')->insert($row);
         }
-
-        $this->db->table('qa_roles')->ignore(true)->insertBatch($rows);
     }
 }
