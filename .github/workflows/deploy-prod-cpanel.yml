@@ -6,12 +6,6 @@ name: Deploy to cPanel via SSH (manual Production)
 #          QA_* API secrets, VITE_API_URL, VITE_APP_NAME.
 on:
   workflow_dispatch:
-    inputs:
-      run_migrations:
-        description: "Run `php spark migrate` + seeders after deploy (first time / on schema change)"
-        required: false
-        default: false
-        type: boolean
 
 concurrency:
   group: cpanel-deploy
@@ -172,6 +166,7 @@ jobs:
 
           rsync -avz --delete \
             --exclude='.env.example' \
+            --exclude='writable/.qa_seed_complete' \
             --exclude='writable/cache/*' \
             --exclude='writable/logs/*' \
             --exclude='writable/session/*' \
@@ -181,18 +176,36 @@ jobs:
 
           echo "Rsynced server-php → ${REMOTE_ROOT}/api"
 
-      - name: Run database migrations + seeds on first deploy
-        if: ${{ inputs.run_migrations == true || github.event.inputs.run_migrations == 'true' }}
+      # migrate: safe every deploy (applies only pending migrations)
+      - name: Run database migrations
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark migrate || echo '::warning::php spark migrate failed (PHP CLI may be locked down on this cPanel)'"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed RolesSeeder || true"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed OwnerSeeder || true"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksTestDataPackSeeder || true"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksExpectedResultsSeeder || true"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed ValidationRulesSeeder || true"
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed SettingsSeeder || true"
+          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark migrate"; then
+            echo "::warning::php spark migrate failed (PHP CLI may be locked down on this cPanel)"
+          fi
+
+      # seeders: once only — marker writable/.qa_seed_complete on the server
+      - name: Run database seeders (first deploy only)
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          MARKER="${REMOTE_ROOT}/api/writable/.qa_seed_complete"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+
+          if "${SSH_CMD[@]}" "test -f \"${MARKER}\""; then
+            echo "Seeders already applied — skipping (marker: writable/.qa_seed_complete)."
+            exit 0
+          fi
+
+          echo "First deploy — running seeders..."
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed RolesSeeder"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed OwnerSeeder"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksTestDataPackSeeder"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksExpectedResultsSeeder"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed ValidationRulesSeeder"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed SettingsSeeder"
+          "${SSH_CMD[@]}" "touch \"${MARKER}\" && chmod 644 \"${MARKER}\""
+          echo "Seeders complete. Marker created — future deploys will skip seeding."
 
       # web/dist/ → PROD_REMOTE_ROOT/ via rsync (preserve api/ and php.ini)
       - name: Rsync web/dist to public_html
