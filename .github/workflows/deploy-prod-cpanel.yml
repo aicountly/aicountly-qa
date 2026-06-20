@@ -1,7 +1,9 @@
 name: Deploy to cPanel via SSH (manual Production)
 
 # Manual-only. Trigger via Actions UI → Run workflow.
-# Pushing to main or pushing tags does NOT auto-deploy to cPanel.
+# Secrets: PROD_SSH_HOST, PROD_SSH_PORT, PROD_SSH_USER, PROD_REMOTE_ROOT,
+#          PROD_SSH_PRIVATE_KEY (+ optional PROD_SSH_PRIVATE_KEY_B64),
+#          QA_* API secrets, VITE_API_URL, VITE_APP_NAME.
 on:
   workflow_dispatch:
     inputs:
@@ -16,11 +18,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CPANEL_SSH_HOST: ${{ secrets.PROD_SFTP_HOST }}
-  CPANEL_SSH_PORT: ${{ secrets.PROD_SFTP_PORT }}
-  CPANEL_SSH_USER: ${{ secrets.PROD_SFTP_USER }}
-  # PROD_SFTP_REMOTE_ROOT → cPanel public_html (e.g. public_html or /home/user/public_html)
-  CPANEL_REMOTE_ROOT: ${{ secrets.PROD_SFTP_REMOTE_ROOT }}
+  PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+  PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+  PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+  # PROD_REMOTE_ROOT → cPanel document root (e.g. /home/qaaicountly/public_html)
+  PROD_REMOTE_ROOT: ${{ secrets.PROD_REMOTE_ROOT }}
   SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
 
 jobs:
@@ -89,28 +91,26 @@ jobs:
       - name: Write server-php production .env from secrets
         working-directory: server-php
         run: |
-          # The .env is intentionally tarballed and pushed — cPanel SSH user can't run composer / spark.
-          # Required secrets: QA_DB_*, QA_JWT_SECRET, QA_VAULT_KEY, QA_WORKER_TOKEN, QA_ALLOWED_ORIGINS.
-          cat > .env <<EOF
-          CI_ENVIRONMENT=production
-          app.baseURL=${{ secrets.QA_API_BASE_URL }}
-          app.indexPage=
-
-          QA_DB_HOST=${{ secrets.QA_DB_HOST }}
-          QA_DB_PORT=${{ secrets.QA_DB_PORT }}
-          QA_DB_NAME=${{ secrets.QA_DB_NAME }}
-          QA_DB_USER=${{ secrets.QA_DB_USER }}
-          QA_DB_PASSWORD=${{ secrets.QA_DB_PASSWORD }}
-
-          QA_JWT_SECRET=${{ secrets.QA_JWT_SECRET }}
-          QA_JWT_TTL_MINUTES=720
-          QA_WORKER_TOKEN=${{ secrets.QA_WORKER_TOKEN }}
-          QA_VAULT_KEY=${{ secrets.QA_VAULT_KEY }}
-
-          QA_REPORTS_DIR=../qa-reports
-
-          QA_ALLOWED_ORIGINS=${{ secrets.QA_ALLOWED_ORIGINS }}
-          EOF
+          {
+            echo "CI_ENVIRONMENT=production"
+            echo "app.baseURL=${{ secrets.QA_API_BASE_URL }}"
+            echo "app.indexPage="
+            echo ""
+            echo "QA_DB_HOST=${{ secrets.QA_DB_HOST }}"
+            echo "QA_DB_PORT=${{ secrets.QA_DB_PORT }}"
+            echo "QA_DB_NAME=${{ secrets.QA_DB_NAME }}"
+            echo "QA_DB_USER=${{ secrets.QA_DB_USER }}"
+            echo "QA_DB_PASSWORD=${{ secrets.QA_DB_PASSWORD }}"
+            echo ""
+            echo "QA_JWT_SECRET=${{ secrets.QA_JWT_SECRET }}"
+            echo "QA_JWT_TTL_MINUTES=720"
+            echo "QA_WORKER_TOKEN=${{ secrets.QA_WORKER_TOKEN }}"
+            echo "QA_VAULT_KEY=${{ secrets.QA_VAULT_KEY }}"
+            echo ""
+            echo "QA_REPORTS_DIR=../qa-reports"
+            echo ""
+            echo "QA_ALLOWED_ORIGINS=${{ secrets.QA_ALLOWED_ORIGINS }}"
+          } > .env
           chmod 600 .env
           echo "Production .env written ($(wc -l < .env) lines)"
 
@@ -138,7 +138,7 @@ jobs:
             exit 1
           fi
 
-          ssh-keyscan -p "${CPANEL_SSH_PORT}" "${CPANEL_SSH_HOST}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "${PROD_SSH_PORT}" "${PROD_SSH_HOST}" >> ~/.ssh/known_hosts
           echo "SSH key loaded and validated"
           echo "Deploy key fingerprint (must match Authorized Keys in cPanel):"
           ssh-keygen -lf ~/.ssh/deploy_key.pub
@@ -147,42 +147,45 @@ jobs:
 
       - name: Test SSH connection
         run: |
-          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
-          if ! ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} \
-            "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}" \
-            "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} (public_html) and ${REMOTE_ROOT}/api\""; then
-            echo "::error::SSH login rejected. The private key in GitHub Secrets is valid, but cPanel has not authorized its public key for PROD_SFTP_USER."
-            echo "Fix in cPanel: Security → SSH Access → Manage SSH Keys → Import the public key from the Setup SSH key step above → click Authorize."
-            echo "Also verify PROD_SFTP_USER, PROD_SFTP_HOST, PROD_SFTP_PORT, and PROD_SFTP_REMOTE_ROOT (public_html) match your cPanel SSH login."
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          if ! ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "test -d \"${REMOTE_ROOT}\" || mkdir -p \"${REMOTE_ROOT}\" \"${REMOTE_ROOT}/api\" && echo \"Remote paths OK: ${REMOTE_ROOT} and ${REMOTE_ROOT}/api\""; then
+            echo "::error::SSH login rejected. Authorize the deploy key public key for PROD_SSH_USER in cPanel."
+            echo "Verify PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_PORT, and PROD_REMOTE_ROOT match your cPanel SSH login."
             exit 1
           fi
 
-      # server-php/ in repo → public_html/api/ on cPanel (tar over SSH — cPanel often has no rsync)
-      # NOTE: .env is generated from GitHub secrets just above — ship it. .env.example is excluded.
-      - name: Deploy server-php to public_html/api via SSH
+      - name: Prepare remote directories
         run: |
-          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\""
 
-          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api\" \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\""
-          # Preserve writable/ across deploys so PHP can keep its cache + logs.
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && find . -mindepth 1 -maxdepth 1 ! -name writable -exec rm -rf {} + 2>/dev/null || true"
+      # server-php/ → PROD_REMOTE_ROOT/api/ via rsync over SSH
+      - name: Rsync server-php to public_html/api
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
+          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${REMOTE_ROOT}/api/"
 
-          tar -czf - \
+          rsync -avz --delete \
             --exclude='.env.example' \
             --exclude='writable/cache/*' \
             --exclude='writable/logs/*' \
             --exclude='writable/session/*' \
             --exclude='node_modules' \
-            -C server-php . | "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && tar -xzf -"
+            -e "$RSYNC_RSH" \
+            server-php/ "$DEST"
 
-          echo "Deployed server-php → ${REMOTE_ROOT}/api"
+          echo "Rsynced server-php → ${REMOTE_ROOT}/api"
 
       - name: Run database migrations + seeds on first deploy
         if: ${{ inputs.run_migrations == true || github.event.inputs.run_migrations == 'true' }}
         run: |
-          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark migrate || echo '::warning::php spark migrate failed (PHP CLI may be locked down on this cPanel)'"
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed RolesSeeder || true"
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed OwnerSeeder || true"
@@ -191,26 +194,33 @@ jobs:
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed ValidationRulesSeeder || true"
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed SettingsSeeder || true"
 
-      # web/dist/ in repo → public_html/ on cPanel (preserve api/ folder)
-      - name: Deploy web/dist to public_html via SSH
+      # web/dist/ → PROD_REMOTE_ROOT/ via rsync (preserve api/ and php.ini)
+      - name: Rsync web/dist to public_html
         run: |
-          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
+          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${REMOTE_ROOT}/"
 
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}\" && find . -maxdepth 1 ! -name . ! -name .. ! -name api -exec rm -rf {} +"
+          rsync -avz --delete \
+            --exclude='api' \
+            --exclude='php.ini' \
+            -e "$RSYNC_RSH" \
+            web/dist/ "$DEST"
 
-          tar -czf - \
-            --exclude='.env' \
-            --exclude='.env.*' \
-            -C web/dist . | "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}\" && tar -xzf -"
+          echo "Rsynced web/dist → ${REMOTE_ROOT} (api/ and php.ini preserved)"
 
-          echo "Deployed web/dist → ${REMOTE_ROOT} (api/ preserved)"
+      - name: Verify remote deploy
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "ls -la \"${REMOTE_ROOT}\" && ls -la \"${REMOTE_ROOT}/api/index.php\" 2>/dev/null || ls -la \"${REMOTE_ROOT}/api/\""
 
       - name: Fix file permissions via SSH
         run: |
-          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
-          ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} \
-            "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}" \
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
             "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
              find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && \
              find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && \

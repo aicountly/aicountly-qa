@@ -64,7 +64,7 @@ Stored in env files only (never committed):
 - `QA_VAULT_KEY`  — AES-256-GCM credential key (64 hex chars). Generate: `php -r "echo bin2hex(random_bytes(32));"`
 - `QA_WORKER_TOKEN` — long-lived shared secret used by the worker. Generate: `php -r "echo bin2hex(random_bytes(48));"`
 - Target app passwords are AES-256-GCM encrypted via `App\Libraries\Vault` before being persisted. The worker fetches them only at session start through `/api/v1/worker/credentials/{id}`.
-- GitHub Actions secrets: `PROD_SFTP_*`, `PROD_SSH_PRIVATE_KEY`, `VITE_API_URL`, `VITE_APP_NAME`.
+- GitHub Actions secrets: `PROD_SSH_HOST`, `PROD_SSH_PORT`, `PROD_SSH_USER`, `PROD_REMOTE_ROOT`, `PROD_SSH_PRIVATE_KEY`, `VITE_API_URL`, `VITE_APP_NAME`, plus `QA_*` API secrets.
 
 ## Setup walkthrough
 
