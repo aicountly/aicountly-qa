@@ -17,7 +17,7 @@ class RunsModel extends Model
         'created_by', 'status', 'started_at', 'completed_at', 'summary_json',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'summary_json' => 'json-array',
     ];
 }

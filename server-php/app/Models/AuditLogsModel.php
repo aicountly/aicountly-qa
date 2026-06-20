@@ -18,5 +18,5 @@ class AuditLogsModel extends Model
         'ip_address', 'user_agent', 'metadata', 'created_at',
     ];
 
-    protected $casts = ['metadata' => 'json-array'];
+    protected array $casts = ['metadata' => 'json-array'];
 }

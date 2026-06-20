@@ -12,7 +12,7 @@ class SettingsModel extends Model
     protected $useTimestamps = true;
     protected $allowedFields = ['key', 'value_json', 'description', 'updated_by'];
 
-    protected $casts = ['value_json' => 'json-array'];
+    protected array $casts = ['value_json' => 'json-array'];
 
     public function get(string $key, mixed $default = null): mixed
     {

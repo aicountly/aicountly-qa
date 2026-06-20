@@ -15,7 +15,7 @@ class ExpectedResultsModel extends Model
         'pack_id', 'metric_key', 'metric_label', 'expected_value_json', 'tolerance', 'created_at',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'expected_value_json' => 'json-array',
     ];
 

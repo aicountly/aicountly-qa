@@ -20,7 +20,7 @@ class SessionResultsModel extends Model
         'started_at', 'completed_at', 'created_at',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'result_json'      => 'json-array',
         'screenshot_paths' => 'json-array',
         'console_errors'   => 'json-array',

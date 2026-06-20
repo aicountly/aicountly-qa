@@ -16,7 +16,7 @@ class TestDataPacksModel extends Model
         'data_json', 'version', 'is_active', 'created_by',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'data_json' => 'json-array',
         'is_active' => 'bool',
     ];

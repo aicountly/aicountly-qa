@@ -18,7 +18,7 @@ class SessionsModel extends Model
         'started_at', 'completed_at', 'last_heartbeat_at',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'scope_json' => 'json-array',
     ];
 

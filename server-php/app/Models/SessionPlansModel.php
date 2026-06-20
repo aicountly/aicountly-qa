@@ -15,7 +15,7 @@ class SessionPlansModel extends Model
         'approved_by', 'approved_at',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'plan_json' => 'json-array',
     ];
 }

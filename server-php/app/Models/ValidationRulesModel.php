@@ -16,7 +16,7 @@ class ValidationRulesModel extends Model
         'expression_json', 'severity_on_fail', 'is_active',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'expression_json' => 'json-array',
         'is_active'       => 'bool',
     ];

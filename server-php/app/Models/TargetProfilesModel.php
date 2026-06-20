@@ -19,7 +19,7 @@ class TargetProfilesModel extends Model
         'ip_restriction', 'status', 'created_by', 'updated_by',
     ];
 
-    protected $casts = [
+    protected array $casts = [
         'allowed_domains'        => 'json-array',
         'allowed_modules'        => 'json-array',
         'ip_restriction'         => 'json-array',
