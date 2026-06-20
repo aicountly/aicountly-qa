@@ -155,7 +155,7 @@ jobs:
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\""
+            "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\" \"${REMOTE_ROOT}/api/writable/uploads\""
 
       # server-php/ → PROD_REMOTE_ROOT/api/ via rsync over SSH
       - name: Rsync server-php to public_html/api
@@ -170,11 +170,24 @@ jobs:
             --exclude='writable/cache/*' \
             --exclude='writable/logs/*' \
             --exclude='writable/session/*' \
+            --exclude='writable/uploads/*' \
+            --exclude='writable/debugbar/*' \
             --exclude='node_modules' \
             -e "$RSYNC_RSH" \
             server-php/ "$DEST"
 
           echo "Rsynced server-php → ${REMOTE_ROOT}/api"
+
+      - name: Ensure writable directory exists (WRITEPATH)
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\" \"${REMOTE_ROOT}/api/writable/uploads\""
+          if ! "${SSH_CMD[@]}" "test -d \"${REMOTE_ROOT}/api/writable\" && test -w \"${REMOTE_ROOT}/api/writable\""; then
+            echo "::error::writable/ missing or not writable at ${REMOTE_ROOT}/api/writable — API will return 503 (WRITEPATH)."
+            exit 1
+          fi
+          echo "writable OK: ${REMOTE_ROOT}/api/writable"
 
       # migrate: safe every deploy (applies only pending migrations)
       - name: Run database migrations
