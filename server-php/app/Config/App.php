@@ -28,5 +28,12 @@ class App extends BaseConfig
 
     public bool $forceGlobalSecureRequests = false;
 
+    /**
+     * Reverse proxy IPs → client IP header (empty = use REMOTE_ADDR only).
+     *
+     * @var array<string, string>
+     */
+    public array $proxyIPs = [];
+
     public bool $CSPEnabled = false;
 }
