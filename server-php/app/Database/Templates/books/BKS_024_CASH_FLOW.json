@@ -1,0 +1,15 @@
+{
+  "code": "BKS_024_CASH_FLOW",
+  "name": "Cash Flow",
+  "product": "books",
+  "module": "Reports",
+  "sub_module": "Cash Flow",
+  "severity_on_fail": "medium",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Reports", "Cash Flow"] },
+    { "kind": "apply_date_filter", "from": "{fy_start}", "to": "{fy_end}" },
+    { "kind": "read_table",    "selector_options": ["[data-test=cash-flow]", "table"], "key": "cash_flow" },
+    { "kind": "expect_metric", "metric_key": "cash_balance", "from": "cash_flow", "row_match": "(Closing|Cash)" }
+  ],
+  "validations": ["CASH_BANK_MATCH", "DATE_FILTER_WORKS"]
+}

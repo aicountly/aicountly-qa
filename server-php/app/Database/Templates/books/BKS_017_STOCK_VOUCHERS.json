@@ -1,0 +1,14 @@
+{
+  "code": "BKS_017_STOCK_VOUCHERS",
+  "name": "Stock Vouchers",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Stock",
+  "data_keys": ["stock_vouchers"],
+  "severity_on_fail": "medium",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Stock Journal"] },
+    { "kind": "create_voucher", "kind_label": "Stock", "items": "{stock_vouchers}", "with_items": true }
+  ],
+  "validations": ["STK_QTY_MOVEMENT", "UI_SAVE_WORKS"]
+}

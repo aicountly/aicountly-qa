@@ -1,0 +1,24 @@
+{
+  "code": "BKS_018_GST_REPORTS",
+  "name": "GST Reports",
+  "product": "books",
+  "module": "Reports",
+  "sub_module": "GST",
+  "splittable": true,
+  "sub_modules": ["GSTR-1", "GSTR-3B", "HSN Summary"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Reports", "GST", "GSTR-1"] },
+    { "kind": "apply_date_filter", "from": "{fy_start}", "to": "{fy_end}" },
+    { "kind": "read_table",   "selector_options": ["[data-test=gstr-1]", "table"], "key": "gstr_1" },
+    { "kind": "expect_metric", "metric_key": "taxable_sales",     "from": "gstr_1", "row_match": "Total" },
+    { "kind": "expect_metric", "metric_key": "output_gst_total",  "from": "gstr_1", "row_match": "Tax" },
+
+    { "kind": "navigate_menu", "path": ["Reports", "GST", "GSTR-3B"] },
+    { "kind": "apply_date_filter", "from": "{fy_start}", "to": "{fy_end}" },
+    { "kind": "read_table",   "selector_options": ["[data-test=gstr-3b]", "table"], "key": "gstr_3b" },
+    { "kind": "expect_metric", "metric_key": "taxable_sales",     "from": "gstr_3b" },
+    { "kind": "expect_metric", "metric_key": "taxable_purchases", "from": "gstr_3b" }
+  ],
+  "validations": ["ACC_GST_OUTPUT_RATE_MATCH", "ACC_GST_INPUT_RATE_MATCH", "REPORTS_RECONCILE_VOUCHERS", "DATE_FILTER_WORKS"]
+}

@@ -1,5 +1,6 @@
-# Generated QA reports (HTML, JSON, screenshots, traces)
-qa-reports/
+# Generated QA reports (HTML, JSON, screenshots, traces) — keep folder, ignore contents
+qa-reports/*
+!qa-reports/.gitkeep
 
 # Dependencies
 node_modules/

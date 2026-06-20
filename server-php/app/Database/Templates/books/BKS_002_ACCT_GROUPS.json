@@ -1,0 +1,23 @@
+{
+  "code": "BKS_002_ACCT_GROUPS",
+  "name": "Account Group Masters",
+  "product": "books",
+  "module": "Masters",
+  "sub_module": "Account Groups",
+  "description": "Verify standard account groups exist (Sundry Debtors/Creditors, Bank, Cash, Sales, Purchase, Duties & Taxes).",
+  "severity_on_fail": "high",
+  "data_keys": ["account_groups"],
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Masters", "Account Groups"] },
+    { "kind": "expect_visible", "selector_options": ["[data-test=group-list]", "table"] },
+    { "kind": "read_table",     "selector_options": ["[data-test=group-list]", "table"], "key": "group_list" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Sundry Debtors" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Sundry Creditors" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Bank Accounts" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Cash-in-hand" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Sales Accounts" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Purchase Accounts" },
+    { "kind": "expect_row", "table_key": "group_list", "match_text": "Duties & Taxes" }
+  ],
+  "validations": ["UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+}

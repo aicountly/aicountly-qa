@@ -1,0 +1,12 @@
+{
+  "code": "BKS_028_UI_CONSISTENCY",
+  "name": "UI Consistency",
+  "product": "books",
+  "module": "UX",
+  "sub_module": "Theme",
+  "severity_on_fail": "low",
+  "steps": [
+    { "kind": "scan_theme", "expected_brand_colour_hex": "#16a34a", "expected_background": "#ffffff", "detect_legacy_classes": ["legacy-", "old-", "bootstrap3"] }
+  ],
+  "validations": ["UI_GREEN_WHITE_THEME", "UI_OLD_THEME_DETECTED"]
+}

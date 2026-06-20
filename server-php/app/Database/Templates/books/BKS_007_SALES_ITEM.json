@@ -1,0 +1,21 @@
+{
+  "code": "BKS_007_SALES_ITEM",
+  "name": "Sales with Item",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Sales",
+  "data_keys": ["sales_vouchers"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Sales"] },
+    { "kind": "create_voucher", "kind_label": "Sales", "items": "{sales_vouchers}", "with_items": true }
+  ],
+  "validations": [
+    "ACC_SALES_REGISTER_MATCH",
+    "ACC_GST_OUTPUT_RATE_MATCH",
+    "STK_QTY_MOVEMENT",
+    "UI_REQUIRED_FIELDS",
+    "UI_SAVE_WORKS",
+    "UI_NO_CRITICAL_CONSOLE"
+  ]
+}

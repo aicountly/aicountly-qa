@@ -1,0 +1,52 @@
+{
+  "code": "BKS_003_LEDGER",
+  "name": "Ledger Masters",
+  "product": "books",
+  "module": "Masters",
+  "sub_module": "Ledger",
+  "description": "Create 3 deterministic ledgers (Customer A, Supplier A, HDFC Bank) tagged with QA run id, then open the ledger list, confirm visibility, and verify each ledger detail page.",
+  "severity_on_fail": "high",
+  "data_keys": ["ledgers"],
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Masters", "Ledger"] },
+    { "kind": "expect_visible", "selector": "[data-test=ledger-list],h1,table" },
+
+    { "kind": "click",  "selector_options": ["[data-test=new-ledger]", "button:has-text('New')", "button:has-text('Create')", "a:has-text('New Ledger')"] },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-name]", "input[name=name]"], "value": "{QA_RUN_ID} Customer A" },
+    { "kind": "select", "selector_options": ["[data-test=ledger-group]", "select[name=group]"], "value": "Sundry Debtors" },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-gstin]", "input[name=gstin]"], "value": "29AAACA1111A1Z5", "optional": true },
+    { "kind": "select", "selector_options": ["[data-test=ledger-state]", "select[name=state]"], "value": "Karnataka", "optional": true },
+    { "kind": "click",  "selector_options": ["[data-test=save]", "button[type=submit]", "button:has-text('Save')"] },
+    { "kind": "expect_toast", "matches": "(saved|created|success)" },
+
+    { "kind": "click",  "selector_options": ["[data-test=new-ledger]", "button:has-text('New')", "button:has-text('Create')"] },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-name]", "input[name=name]"], "value": "{QA_RUN_ID} Supplier A" },
+    { "kind": "select", "selector_options": ["[data-test=ledger-group]", "select[name=group]"], "value": "Sundry Creditors" },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-gstin]", "input[name=gstin]"], "value": "29CCDCA3333C1Z5", "optional": true },
+    { "kind": "select", "selector_options": ["[data-test=ledger-state]", "select[name=state]"], "value": "Karnataka", "optional": true },
+    { "kind": "click",  "selector_options": ["[data-test=save]", "button[type=submit]", "button:has-text('Save')"] },
+    { "kind": "expect_toast", "matches": "(saved|created|success)" },
+
+    { "kind": "click",  "selector_options": ["[data-test=new-ledger]", "button:has-text('New')", "button:has-text('Create')"] },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-name]", "input[name=name]"], "value": "{QA_RUN_ID} HDFC Bank" },
+    { "kind": "select", "selector_options": ["[data-test=ledger-group]", "select[name=group]"], "value": "Bank Accounts" },
+    { "kind": "fill",   "selector_options": ["[data-test=ledger-opening]", "input[name=opening_balance]"], "value": "500000", "optional": true },
+    { "kind": "click",  "selector_options": ["[data-test=save]", "button[type=submit]", "button:has-text('Save')"] },
+    { "kind": "expect_toast", "matches": "(saved|created|success)" },
+
+    { "kind": "navigate_menu", "path": ["Masters", "Ledger"] },
+    { "kind": "search",       "selector_options": ["[data-test=ledger-search]", "input[type=search]", "input[placeholder*=Search]"], "value": "{QA_RUN_ID}" },
+    { "kind": "read_table",   "selector_options": ["[data-test=ledger-list]", "table"], "key": "ledger_list_after_qa" },
+    { "kind": "expect_row",   "table_key": "ledger_list_after_qa", "match_text": "{QA_RUN_ID} Customer A" },
+    { "kind": "expect_row",   "table_key": "ledger_list_after_qa", "match_text": "{QA_RUN_ID} Supplier A" },
+    { "kind": "expect_row",   "table_key": "ledger_list_after_qa", "match_text": "{QA_RUN_ID} HDFC Bank" }
+  ],
+  "validations": [
+    "UI_REQUIRED_FIELDS",
+    "UI_SAVE_WORKS",
+    "UI_NO_BLANK_PAGE",
+    "UI_NO_CRITICAL_CONSOLE",
+    "UI_NO_UNHANDLED_API",
+    "CTX_PERSISTENCE"
+  ]
+}

@@ -1,30 +1,36 @@
 <?php
 
-declare(strict_types=1);
+/*
+ * AICOUNTLY QA Portal — CodeIgniter 4.6 front controller.
+ *
+ * Deployed to cPanel public_html/api/index.php via deploy-prod-cpanel workflow.
+ * Local dev:  php -S 0.0.0.0:8080 -t server-php  server-php/index.php
+ */
 
-header('Content-Type: application/json; charset=utf-8');
-header('X-Content-Type-Options: nosniff');
+define('FCPATH', __DIR__ . DIRECTORY_SEPARATOR);
 
-$method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$path = preg_replace('#^/api/?#', '/', $path) ?: '/';
-$path = rtrim($path, '/') ?: '/';
+$pathsConfig = __DIR__ . '/app/Config/Paths.php';
+require realpath($pathsConfig) ?: $pathsConfig;
 
-if ($method === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
+$paths = new Config\Paths();
 
-if ($path === '/' || $path === '/health') {
+if (! file_exists(__DIR__ . '/vendor/autoload.php')) {
+    http_response_code(503);
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
-        'ok' => true,
+        'ok'      => false,
         'service' => 'aicountly-qa-api',
-        'status' => 'scaffold',
-        'message' => 'CodeIgniter 4.6 QA API will be added in a later phase.',
-        'timestamp' => gmdate('c'),
-    ], JSON_UNESCAPED_SLASHES);
+        'error'   => 'Composer dependencies missing. Run `composer install` inside server-php/.',
+    ]);
     exit;
 }
 
-http_response_code(404);
-echo json_encode(['ok' => false, 'error' => 'Not found'], JSON_UNESCAPED_SLASHES);
+require rtrim($paths->systemDirectory, '\\/ ') . DIRECTORY_SEPARATOR . 'bootstrap.php';
+
+$app = Config\Services::codeigniter();
+$app->initialize();
+
+$context = is_cli() ? 'php-cli' : 'web';
+$app->setContext($context);
+
+$app->run();

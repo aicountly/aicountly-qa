@@ -1,0 +1,14 @@
+{
+  "code": "BKS_011_PAYMENT",
+  "name": "Payment",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Payment",
+  "data_keys": ["payment_vouchers"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Payment"] },
+    { "kind": "create_voucher", "kind_label": "Payment", "items": "{payment_vouchers}", "schema": "from_to_amount" }
+  ],
+  "validations": ["CASH_BANK_MATCH", "UI_SAVE_WORKS"]
+}

@@ -1,0 +1,14 @@
+{
+  "code": "BKS_013_CONTRA",
+  "name": "Contra",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Contra",
+  "data_keys": ["contra_vouchers"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Contra"] },
+    { "kind": "create_voucher", "kind_label": "Contra", "items": "{contra_vouchers}", "schema": "from_to_amount" }
+  ],
+  "validations": ["CASH_BANK_MATCH", "UI_SAVE_WORKS"]
+}

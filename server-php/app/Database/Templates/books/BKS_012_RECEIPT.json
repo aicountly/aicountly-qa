@@ -1,0 +1,14 @@
+{
+  "code": "BKS_012_RECEIPT",
+  "name": "Receipt",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Receipt",
+  "data_keys": ["receipt_vouchers"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Receipt"] },
+    { "kind": "create_voucher", "kind_label": "Receipt", "items": "{receipt_vouchers}", "schema": "from_to_amount" }
+  ],
+  "validations": ["CASH_BANK_MATCH", "UI_SAVE_WORKS"]
+}

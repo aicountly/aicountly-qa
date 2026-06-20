@@ -1,0 +1,14 @@
+{
+  "code": "BKS_005_VOUCHER_SERIES",
+  "name": "Voucher Series",
+  "product": "books",
+  "module": "Masters",
+  "sub_module": "Voucher Series",
+  "data_keys": ["voucher_series"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Masters", "Voucher Series"] },
+    { "kind": "ensure_master_exists", "kind_label": "Series", "items": "{voucher_series}", "name_field": "prefix" }
+  ],
+  "validations": ["UI_SAVE_WORKS", "UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+}

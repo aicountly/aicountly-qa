@@ -2,6 +2,12 @@ name: Deploy to cPanel via SSH (manual Production)
 
 on:
   workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: "Run `php spark migrate` + seeders after deploy (first time / on schema change)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: cpanel-deploy
@@ -60,7 +66,51 @@ jobs:
       - name: Verify server-php exists
         run: |
           test -d server-php || (echo "server-php/ missing — required for cPanel api/" && exit 1)
+          test -f server-php/composer.json || (echo "server-php/composer.json missing" && exit 1)
           echo "server-php ready: $(find server-php -type f | wc -l) files"
+
+      - name: Setup PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: pgsql, pdo_pgsql, mbstring, intl, openssl, curl, json
+          coverage: none
+          tools: composer:v2
+
+      - name: Install server-php Composer dependencies (production)
+        working-directory: server-php
+        run: |
+          composer install --no-dev --no-interaction --no-progress --optimize-autoloader --prefer-dist
+          test -d vendor/codeigniter4/framework || (echo "CI4 framework missing after install" && exit 1)
+          echo "Composer dependencies installed: $(ls -1 vendor | wc -l) packages"
+
+      - name: Write server-php production .env from secrets
+        working-directory: server-php
+        run: |
+          # The .env is intentionally tarballed and pushed — cPanel SSH user can't run composer / spark.
+          # Required secrets: QA_DB_*, QA_JWT_SECRET, QA_VAULT_KEY, QA_WORKER_TOKEN, QA_ALLOWED_ORIGINS.
+          cat > .env <<EOF
+          CI_ENVIRONMENT=production
+          app.baseURL=${{ secrets.QA_API_BASE_URL }}
+          app.indexPage=
+
+          QA_DB_HOST=${{ secrets.QA_DB_HOST }}
+          QA_DB_PORT=${{ secrets.QA_DB_PORT }}
+          QA_DB_NAME=${{ secrets.QA_DB_NAME }}
+          QA_DB_USER=${{ secrets.QA_DB_USER }}
+          QA_DB_PASSWORD=${{ secrets.QA_DB_PASSWORD }}
+
+          QA_JWT_SECRET=${{ secrets.QA_JWT_SECRET }}
+          QA_JWT_TTL_MINUTES=720
+          QA_WORKER_TOKEN=${{ secrets.QA_WORKER_TOKEN }}
+          QA_VAULT_KEY=${{ secrets.QA_VAULT_KEY }}
+
+          QA_REPORTS_DIR=../qa-reports
+
+          QA_ALLOWED_ORIGINS=${{ secrets.QA_ALLOWED_ORIGINS }}
+          EOF
+          chmod 600 .env
+          echo "Production .env written ($(wc -l < .env) lines)"
 
       - name: Setup SSH key
         env:
@@ -106,20 +156,38 @@ jobs:
           fi
 
       # server-php/ in repo → public_html/api/ on cPanel (tar over SSH — cPanel often has no rsync)
+      # NOTE: .env is generated from GitHub secrets just above — ship it. .env.example is excluded.
       - name: Deploy server-php to public_html/api via SSH
         run: |
           REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
 
-          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api\""
-          "${SSH_CMD[@]}" "find \"${REMOTE_ROOT}/api\" -mindepth 1 -delete 2>/dev/null || rm -rf \"${REMOTE_ROOT}/api\"/*"
+          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api\" \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\""
+          # Preserve writable/ across deploys so PHP can keep its cache + logs.
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && find . -mindepth 1 -maxdepth 1 ! -name writable -exec rm -rf {} + 2>/dev/null || true"
 
           tar -czf - \
-            --exclude='.env' \
-            --exclude='.env.*' \
+            --exclude='.env.example' \
+            --exclude='writable/cache/*' \
+            --exclude='writable/logs/*' \
+            --exclude='writable/session/*' \
+            --exclude='node_modules' \
             -C server-php . | "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && tar -xzf -"
 
           echo "Deployed server-php → ${REMOTE_ROOT}/api"
+
+      - name: Run database migrations + seeds on first deploy
+        if: ${{ inputs.run_migrations == true || github.event.inputs.run_migrations == 'true' }}
+        run: |
+          REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark migrate || echo '::warning::php spark migrate failed (PHP CLI may be locked down on this cPanel)'"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed RolesSeeder || true"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed OwnerSeeder || true"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksTestDataPackSeeder || true"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed BooksExpectedResultsSeeder || true"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed ValidationRulesSeeder || true"
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php spark db:seed SettingsSeeder || true"
 
       # web/dist/ in repo → public_html/ on cPanel (preserve api/ folder)
       - name: Deploy web/dist to public_html via SSH
@@ -144,4 +212,6 @@ jobs:
             "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
              find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && \
              find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && \
+             chmod 600 \"${REMOTE_ROOT}/api/.env\" 2>/dev/null || true && \
+             chmod -R 775 \"${REMOTE_ROOT}/api/writable\" 2>/dev/null || true && \
              echo 'Permissions fixed' && echo 'Deploy complete: web/dist → public_html, server-php → public_html/api'"

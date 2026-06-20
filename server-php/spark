@@ -1,0 +1,31 @@
+#!/usr/bin/env php
+<?php
+
+/*
+ * --------------------------------------------------------------------
+ * AICOUNTLY QA Portal — CodeIgniter 4.6 command-line tools
+ * --------------------------------------------------------------------
+ */
+
+define('SPARKED', true);
+
+if (PHP_SAPI === 'cgi-fcgi' || str_starts_with(PHP_SAPI, 'cgi')) {
+    exit("The spark CLI requires php-cli, not php-cgi.\n");
+}
+
+$pathsConfig = __DIR__ . '/app/Config/Paths.php';
+require realpath($pathsConfig) ?: $pathsConfig;
+
+$paths = new Config\Paths();
+
+if (! file_exists(__DIR__ . '/vendor/autoload.php')) {
+    fwrite(STDERR, "Composer dependencies missing. Run `composer install` inside server-php/.\n");
+    exit(1);
+}
+
+require rtrim($paths->systemDirectory, '\\/ ') . DIRECTORY_SEPARATOR . 'bootstrap.php';
+
+$app = Config\Services::codeigniter();
+$app->initialize();
+
+exit(\CodeIgniter\CLI\Console::run());

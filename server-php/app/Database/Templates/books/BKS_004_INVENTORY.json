@@ -1,0 +1,21 @@
+{
+  "code": "BKS_004_INVENTORY",
+  "name": "Inventory Masters",
+  "product": "books",
+  "module": "Masters",
+  "sub_module": "Inventory",
+  "splittable": true,
+  "sub_modules": ["Units", "Stock Categories", "Items"],
+  "description": "Create deterministic units (NOS/KG/BOX), stock categories and 3 items (Product A/B/C) tagged with QA run id.",
+  "severity_on_fail": "high",
+  "data_keys": ["units", "stock_categories", "items"],
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Inventory", "Units"] },
+    { "kind": "ensure_master_exists", "kind_label": "Unit", "items": "{units}", "name_field": "name" },
+    { "kind": "navigate_menu", "path": ["Inventory", "Stock Categories"] },
+    { "kind": "ensure_master_exists", "kind_label": "Stock Category", "items": "{stock_categories}", "name_field": "name" },
+    { "kind": "navigate_menu", "path": ["Inventory", "Items"] },
+    { "kind": "ensure_master_exists", "kind_label": "Item", "items": "{items}", "name_field": "name" }
+  ],
+  "validations": ["UI_REQUIRED_FIELDS", "UI_SAVE_WORKS", "UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+}

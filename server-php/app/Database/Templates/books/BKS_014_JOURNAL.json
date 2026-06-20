@@ -1,0 +1,14 @@
+{
+  "code": "BKS_014_JOURNAL",
+  "name": "Journal",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Journal",
+  "data_keys": ["journal_vouchers"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Journal"] },
+    { "kind": "create_voucher", "kind_label": "Journal", "items": "{journal_vouchers}", "schema": "journal_entries" }
+  ],
+  "validations": ["ACC_TB_BALANCED", "UI_SAVE_WORKS"]
+}

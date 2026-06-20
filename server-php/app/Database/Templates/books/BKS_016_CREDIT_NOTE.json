@@ -1,0 +1,14 @@
+{
+  "code": "BKS_016_CREDIT_NOTE",
+  "name": "Credit Note",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Credit Note",
+  "data_keys": ["credit_notes"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Credit Note"] },
+    { "kind": "create_voucher", "kind_label": "Credit Note", "items": "{credit_notes}", "with_items": true }
+  ],
+  "validations": ["ACC_GST_OUTPUT_RATE_MATCH", "STK_QTY_MOVEMENT", "UI_SAVE_WORKS"]
+}

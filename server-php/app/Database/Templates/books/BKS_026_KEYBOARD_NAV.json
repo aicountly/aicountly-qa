@@ -1,0 +1,13 @@
+{
+  "code": "BKS_026_KEYBOARD_NAV",
+  "name": "Keyboard Navigation",
+  "product": "books",
+  "module": "UX",
+  "sub_module": "Keyboard",
+  "severity_on_fail": "medium",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Sales"] },
+    { "kind": "keyboard_flow", "sequence": ["Tab","Tab","Type:{QA_RUN_ID} Customer A","Enter","Tab","Type:{QA_RUN_ID} Product A","Enter"], "expect_focus_change_each_step": true }
+  ],
+  "validations": ["UI_KEYBOARD_FLOW", "UI_NO_CRITICAL_CONSOLE"]
+}

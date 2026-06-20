@@ -1,0 +1,20 @@
+{
+  "code": "BKS_001_LOGIN_CTX",
+  "name": "Login & Company Context",
+  "product": "books",
+  "module": "Login",
+  "description": "Login to Books, select/create company, branch and financial year using deterministic data pack.",
+  "severity_on_fail": "critical",
+  "steps": [
+    { "kind": "navigate",     "to": "{login_url}",                                    "expect": "login form visible" },
+    { "kind": "fill",         "selector": "input[name=email],input[name=username]",  "value": "{username}" },
+    { "kind": "fill",         "selector": "input[type=password]",                    "value": "{password}" },
+    { "kind": "click",        "selector": "button[type=submit]" },
+    { "kind": "expect_url",   "matches": "/dashboard|/home|/companies" },
+    { "kind": "select_or_create_company", "name_template": "{QA_RUN_ID} Test Company Pvt Ltd" },
+    { "kind": "select_or_create_branch",  "name_template": "{QA_RUN_ID} HO" },
+    { "kind": "select_or_create_financial_year", "name": "FY 2026-27", "start": "2026-04-01", "end": "2027-03-31" },
+    { "kind": "expect_visible", "selector": "[data-test=app-shell],main" }
+  ],
+  "validations": ["CTX_PERSISTENCE", "UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+}

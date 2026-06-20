@@ -1,3 +1,12 @@
+/vendor/
+/writable/cache/*
+/writable/logs/*
+/writable/session/*
+/writable/uploads/*
+/writable/debugbar/*
+/writable/migrations.lock
 .env
-.env.local
-*.log
+.env.*
+!.env.example
+.phpunit.result.cache
+.phpcs-cache

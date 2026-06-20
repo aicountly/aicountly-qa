@@ -1,0 +1,14 @@
+{
+  "code": "BKS_015_DEBIT_NOTE",
+  "name": "Debit Note",
+  "product": "books",
+  "module": "Vouchers",
+  "sub_module": "Debit Note",
+  "data_keys": ["debit_notes"],
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Vouchers", "Debit Note"] },
+    { "kind": "create_voucher", "kind_label": "Debit Note", "items": "{debit_notes}", "with_items": true }
+  ],
+  "validations": ["ACC_GST_INPUT_RATE_MATCH", "STK_QTY_MOVEMENT", "UI_SAVE_WORKS"]
+}

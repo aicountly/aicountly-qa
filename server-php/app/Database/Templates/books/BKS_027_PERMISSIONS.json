@@ -1,0 +1,14 @@
+{
+  "code": "BKS_027_PERMISSIONS",
+  "name": "Permissions",
+  "product": "books",
+  "module": "Security",
+  "sub_module": "Permissions",
+  "severity_on_fail": "high",
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Settings", "Users & Roles"] },
+    { "kind": "expect_visible", "selector_options": ["[data-test=roles-list]", "table"] },
+    { "kind": "expect_text", "matches": "(Admin|User|Viewer|Manager)" }
+  ],
+  "validations": ["UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+}

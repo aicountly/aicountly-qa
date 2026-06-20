@@ -2,8 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: Inter, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
+html, body, #root { height: 100%; }
+body { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+
+@layer components {
+  .qa-card {
+    @apply rounded-xl border border-neutral-200 bg-white p-5 shadow-sm;
+  }
+  .qa-input {
+    @apply block w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm
+      focus:border-aicountly-500 focus:outline-none focus:ring-2 focus:ring-aicountly-500/30
+      disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-500;
+  }
+  .qa-label {
+    @apply block text-xs font-medium uppercase tracking-wide text-neutral-600 mb-1;
+  }
+  .qa-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm
+      transition focus:outline-none focus:ring-2 focus:ring-offset-1;
+  }
+  .qa-btn-primary {
+    @apply qa-btn bg-aicountly-600 text-white hover:bg-aicountly-700 focus:ring-aicountly-500
+      disabled:bg-neutral-300 disabled:cursor-not-allowed;
+  }
+  .qa-btn-secondary {
+    @apply qa-btn bg-white text-neutral-800 border border-neutral-300 hover:bg-neutral-50;
+  }
+  .qa-btn-danger {
+    @apply qa-btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+  .qa-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .qa-table {
+    @apply w-full border-collapse text-sm;
+  }
+  .qa-table th {
+    @apply bg-aicountly-50 text-left text-xs font-semibold uppercase tracking-wide text-aicountly-700
+      px-3 py-2 border-b border-aicountly-100;
+  }
+  .qa-table td {
+    @apply px-3 py-2 border-b border-neutral-100 text-neutral-800;
+  }
 }

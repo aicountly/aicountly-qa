@@ -1,0 +1,24 @@
+{
+  "samples": [
+    {
+      "name": "Smoke run (Books sandbox)",
+      "kind": "template",
+      "prompt": "Login to Books sandbox. Verify dashboard loads, menus open, and report pages render without console errors. Do not create dummy data. Run as smoke check."
+    },
+    {
+      "name": "Full functional run (Books sandbox)",
+      "kind": "template",
+      "prompt": "Run a full functional QA on Books sandbox. Create deterministic ledgers, items, sales/purchase vouchers, payments, receipts. Open ledger, registers, GST reports, trial balance, P&L and balance sheet. Verify all totals against expected results. Capture screenshots, trace, console and network."
+    },
+    {
+      "name": "GST reconciliation only (Books sandbox)",
+      "kind": "template",
+      "prompt": "Focus on GST. Create sales and purchase vouchers, then validate GSTR-1, GSTR-3B and HSN summary against expected output/input GST. Skip permission and keyboard sessions."
+    },
+    {
+      "name": "Production basic check (any product)",
+      "kind": "template",
+      "prompt": "Login only. Confirm dashboard loads, menus open, reports pages render. Do not create dummy data. Report console errors and failed API calls."
+    }
+  ]
+}
