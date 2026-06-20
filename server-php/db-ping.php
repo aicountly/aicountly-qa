@@ -33,6 +33,12 @@ $name = $readEnv('QA_DB_NAME');
 $user = $readEnv('QA_DB_USER');
 $pass = $readEnv('QA_DB_PASSWORD');
 
+echo "QA_DB_HOST={$host}\n";
+echo "QA_DB_PORT={$port}\n";
+echo "QA_DB_NAME={$name}\n";
+echo "QA_DB_USER={$user}\n";
+echo 'QA_DB_PASSWORD=*** (' . strlen($pass) . " chars)\n";
+
 foreach (['QA_DB_HOST' => $host, 'QA_DB_NAME' => $name, 'QA_DB_USER' => $user] as $label => $val) {
     if ($val === '' || $val === null) {
         fwrite(STDERR, "Missing or empty {$label} in .env\n");

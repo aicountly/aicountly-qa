@@ -24,7 +24,7 @@ use CodeIgniter\HotReloader\HotReloader;
  */
 
 Events::on('pre_system', static function (): void {
-    if (ENVIRONMENT !== 'testing') {
+    if (ENVIRONMENT !== 'testing' && ! is_cli()) {
         $value = ini_get('zlib.output_compression');
 
         if (filter_var($value, FILTER_VALIDATE_BOOLEAN) || (int) $value > 0) {

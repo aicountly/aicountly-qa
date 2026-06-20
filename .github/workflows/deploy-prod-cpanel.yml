@@ -270,8 +270,8 @@ jobs:
             echo '--- pgsql extensions ---' && (php -m | grep -i pgsql || echo 'MISSING: install pdo_pgsql for PHP CLI in cPanel') && \
             echo '--- .env ---' && (test -f .env && echo '.env exists' || echo 'MISSING .env') && \
             (grep '^QA_DB_' .env 2>/dev/null | sed 's/=.*/=***/' || echo 'no QA_DB_* keys in .env') && \
-            echo '--- PDO smoke test ---' && \
-            CI_ENVIRONMENT=development php db-ping.php 2>&1 || true && \
+            echo '--- env check ---' && \
+            php check-env.php 2>&1 || true && \
             echo '--- spark migrate:status ---' && \
             CI_ENVIRONMENT=development php spark migrate:status 2>&1 || true"
 
