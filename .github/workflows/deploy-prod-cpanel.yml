@@ -235,6 +235,9 @@ jobs:
             server-php/ "$DEST"
 
           echo "Rsynced server-php → ${REMOTE_ROOT}/api"
+          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "ls -1 \"${REMOTE_ROOT}/api/app/Database/Migrations\"/*.php 2>/dev/null | wc -l || echo '0 migration files on server'"
 
       - name: Verify deployed .env on server
         run: |
@@ -268,7 +271,7 @@ jobs:
             echo '--- .env ---' && (test -f .env && echo '.env exists' || echo 'MISSING .env') && \
             (grep '^QA_DB_' .env 2>/dev/null | sed 's/=.*/=***/' || echo 'no QA_DB_* keys in .env') && \
             echo '--- PDO smoke test ---' && \
-            CI_ENVIRONMENT=development php scripts/db-ping.php 2>&1 || true && \
+            CI_ENVIRONMENT=development php db-ping.php 2>&1 || true && \
             echo '--- spark migrate:status ---' && \
             CI_ENVIRONMENT=development php spark migrate:status 2>&1 || true"
 
