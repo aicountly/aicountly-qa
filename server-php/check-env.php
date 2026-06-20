@@ -41,6 +41,13 @@ $vars = [
     'QA_DB_PASSWORD' => $read('QA_DB_PASSWORD'),
 ];
 
+$jwtSecret = $read('QA_JWT_SECRET');
+$vaultKey  = $read('QA_VAULT_KEY');
+
+echo "\n--- Auth secrets (from .env) ---\n";
+echo 'QA_JWT_SECRET=' . ($jwtSecret === '' ? '(EMPTY — login returns 503)' : '*** (' . strlen($jwtSecret) . ' chars' . (strlen($jwtSecret) < 32 ? ', TOO SHORT' : '') . ')') . "\n";
+echo 'QA_VAULT_KEY=' . ($vaultKey === '' ? '(EMPTY)' : '*** (' . strlen($vaultKey) . ' chars)') . "\n";
+
 echo "\n--- QA_DB_* (from .env) ---\n";
 foreach ($vars as $key => $val) {
     if ($key === 'QA_DB_PASSWORD') {
@@ -83,6 +90,13 @@ try {
     ]);
     $pdo->query('SELECT 1');
     echo "PDO OK\n";
+
+    if ($jwtSecret === '' || strlen($jwtSecret) < 32) {
+        fwrite(STDERR, "WARNING: QA_JWT_SECRET missing or < 32 chars — auth/login will fail.\n");
+        fwrite(STDERR, "Add to api/.env: QA_JWT_SECRET=" . bin2hex(random_bytes(32)) . "\n");
+        exit(1);
+    }
+
     exit(0);
 } catch (Throwable $e) {
     fwrite(STDERR, 'PDO FAILED: ' . $e->getMessage() . "\n");

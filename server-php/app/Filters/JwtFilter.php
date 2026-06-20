@@ -18,7 +18,14 @@ class JwtFilter implements FilterInterface
                 ->setJSON(['ok' => false, 'error' => 'Missing or malformed Authorization header.']);
         }
 
-        $payload = Services::jwt()->decode($m[1]);
+        $payload = null;
+        try {
+            $payload = Services::jwt()->decode($m[1]);
+        } catch (\Throwable $e) {
+            return service('response')
+                ->setStatusCode(503)
+                ->setJSON(['ok' => false, 'error' => 'Server misconfigured: QA_JWT_SECRET in api/.env']);
+        }
         if (! $payload) {
             return service('response')
                 ->setStatusCode(401)

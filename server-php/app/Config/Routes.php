@@ -16,11 +16,20 @@ $routes->get('/', static function () {
 });
 
 $routes->get('/health', static function () {
+    $jwtSecret = (string) env('QA_JWT_SECRET', '');
+    $jwtOk     = $jwtSecret !== '' && strlen($jwtSecret) >= 32;
+    $vaultKey  = (string) env('QA_VAULT_KEY', '');
+    $vaultOk   = $vaultKey !== '' && strlen($vaultKey) >= 32;
+
     return service('response')->setJSON([
-        'ok'        => true,
+        'ok'        => $jwtOk,
         'service'   => 'aicountly-qa-api',
-        'status'    => 'ready',
+        'status'    => $jwtOk ? 'ready' : 'misconfigured',
         'timestamp' => gmdate('c'),
+        'checks'    => [
+            'jwt_secret' => $jwtOk ? 'ok' : 'missing or too short (need 32+ chars in api/.env)',
+            'vault_key'  => $vaultOk ? 'ok' : 'missing or too short',
+        ],
     ]);
 });
 
