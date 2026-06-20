@@ -1,0 +1,20 @@
+# Generated QA reports (HTML, JSON, screenshots, traces)
+qa-reports/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+**/.env
+
+# Build output
+web/dist/
+worker/dist/
+server-php/writable/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,20 @@
+{
+  "name": "aicountly-qa-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "qa:basic-check": "node dist/index.js --mode=basic-check",
+    "qa:run-session": "node dist/index.js --mode=run-session",
+    "qa:books": "node dist/index.js --mode=books",
+    "qa:reports": "node dist/index.js --mode=reports",
+    "qa:validate": "node dist/index.js --mode=validate",
+    "qa:cleanup": "node dist/index.js --mode=cleanup"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

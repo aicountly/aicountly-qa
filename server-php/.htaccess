@@ -1,8 +1,8 @@
 RewriteEngine On
 RewriteBase /api/
 
-# Block direct access to sensitive paths
-RewriteRule ^(database|lib|writable)/ - [F,L]
+# Block direct access to sensitive paths (CodeIgniter layout)
+RewriteRule ^(app|database|writable|vendor)/ - [F,L]
 
 <FilesMatch "^\.env">
   <IfModule mod_authz_core.c>
