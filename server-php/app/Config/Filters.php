@@ -7,14 +7,17 @@ use App\Filters\JwtFilter;
 use App\Filters\ProductionGuardFilter;
 use App\Filters\RoleFilter;
 use App\Filters\WorkerAuthFilter;
-use CodeIgniter\Config\BaseConfig;
+use CodeIgniter\Config\Filters as BaseFilters;
 use CodeIgniter\Filters\CSRF;
 use CodeIgniter\Filters\DebugToolbar;
+use CodeIgniter\Filters\ForceHTTPS;
 use CodeIgniter\Filters\Honeypot;
 use CodeIgniter\Filters\InvalidChars;
+use CodeIgniter\Filters\PageCache;
+use CodeIgniter\Filters\PerformanceMetrics;
 use CodeIgniter\Filters\SecureHeaders;
 
-class Filters extends BaseConfig
+class Filters extends BaseFilters
 {
     public array $aliases = [
         'csrf'          => CSRF::class,
@@ -22,11 +25,26 @@ class Filters extends BaseConfig
         'honeypot'      => Honeypot::class,
         'invalidchars'  => InvalidChars::class,
         'secureheaders' => SecureHeaders::class,
+        'forcehttps'    => ForceHTTPS::class,
+        'pagecache'     => PageCache::class,
+        'performance'   => PerformanceMetrics::class,
         'cors'          => CorsFilter::class,
         'jwt'           => JwtFilter::class,
         'role'          => RoleFilter::class,
         'prod-guard'    => ProductionGuardFilter::class,
         'worker-auth'   => WorkerAuthFilter::class,
+    ];
+
+    public array $required = [
+        'before' => [
+            'forcehttps',
+            'pagecache',
+        ],
+        'after' => [
+            'pagecache',
+            'performance',
+            'toolbar',
+        ],
     ];
 
     public array $globals = [
@@ -35,7 +53,6 @@ class Filters extends BaseConfig
         ],
         'after' => [
             'cors',
-            'toolbar',
             'secureheaders',
         ],
     ];

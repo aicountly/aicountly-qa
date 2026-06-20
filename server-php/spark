@@ -1,31 +1,40 @@
 #!/usr/bin/env php
 <?php
 
-/*
- * --------------------------------------------------------------------
- * AICOUNTLY QA Portal — CodeIgniter 4.6 command-line tools
- * --------------------------------------------------------------------
+/**
+ * AICOUNTLY QA Portal — CodeIgniter 4.6 CLI (spark).
+ * Layout: project root = api/ on cPanel (no public/ subfolder).
  */
+
+use CodeIgniter\Boot;
+use Config\Paths;
 
 define('SPARKED', true);
 
-if (PHP_SAPI === 'cgi-fcgi' || str_starts_with(PHP_SAPI, 'cgi')) {
+if (str_starts_with(PHP_SAPI, 'cgi')) {
     exit("The spark CLI requires php-cli, not php-cgi.\n");
 }
 
-$pathsConfig = __DIR__ . '/app/Config/Paths.php';
-require realpath($pathsConfig) ?: $pathsConfig;
+$minPhpVersion = '8.1';
+if (version_compare(PHP_VERSION, $minPhpVersion, '<')) {
+    exit(sprintf('PHP %s+ required. Current: %s', $minPhpVersion, PHP_VERSION));
+}
 
-$paths = new Config\Paths();
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
+
+define('FCPATH', __DIR__ . DIRECTORY_SEPARATOR);
+chdir(FCPATH);
+
+require FCPATH . 'app/Config/Paths.php';
+
+$paths = new Paths();
 
 if (! file_exists(__DIR__ . '/vendor/autoload.php')) {
     fwrite(STDERR, "Composer dependencies missing. Run `composer install` inside server-php/.\n");
     exit(1);
 }
 
-require rtrim($paths->systemDirectory, '\\/ ') . DIRECTORY_SEPARATOR . 'bootstrap.php';
+require $paths->systemDirectory . '/Boot.php';
 
-$app = Config\Services::codeigniter();
-$app->initialize();
-
-exit(\CodeIgniter\CLI\Console::run());
+exit(Boot::bootSpark($paths));

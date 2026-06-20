@@ -1,18 +1,26 @@
 <?php
 
-/*
+/**
  * AICOUNTLY QA Portal — CodeIgniter 4.6 front controller.
- *
- * Deployed to cPanel public_html/api/index.php via deploy-prod-cpanel workflow.
- * Local dev:  php -S 0.0.0.0:8080 -t server-php  server-php/index.php
+ * Deployed to cPanel public_html/api/index.php.
  */
 
+use CodeIgniter\Boot;
+use Config\Paths;
+
+$minPhpVersion = '8.1';
+if (version_compare(PHP_VERSION, $minPhpVersion, '<')) {
+    header('HTTP/1.1 503 Service Unavailable.', true, 503);
+    echo sprintf('PHP %s+ required. Current: %s', $minPhpVersion, PHP_VERSION);
+    exit(1);
+}
+
 define('FCPATH', __DIR__ . DIRECTORY_SEPARATOR);
+chdir(FCPATH);
 
-$pathsConfig = __DIR__ . '/app/Config/Paths.php';
-require realpath($pathsConfig) ?: $pathsConfig;
+require FCPATH . 'app/Config/Paths.php';
 
-$paths = new Config\Paths();
+$paths = new Paths();
 
 if (! file_exists(__DIR__ . '/vendor/autoload.php')) {
     http_response_code(503);
@@ -25,12 +33,6 @@ if (! file_exists(__DIR__ . '/vendor/autoload.php')) {
     exit;
 }
 
-require rtrim($paths->systemDirectory, '\\/ ') . DIRECTORY_SEPARATOR . 'bootstrap.php';
+require $paths->systemDirectory . '/Boot.php';
 
-$app = Config\Services::codeigniter();
-$app->initialize();
-
-$context = is_cli() ? 'php-cli' : 'web';
-$app->setContext($context);
-
-$app->run();
+exit(Boot::bootWeb($paths));
