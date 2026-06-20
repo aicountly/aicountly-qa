@@ -3,8 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, v1 } from '../lib/api.js'
 import ProductionBanner from '../components/ProductionBanner.jsx'
-
-const products = ['books', 'gh-books', 'sandbox', 'my', 'manage', 'auditor', 'fr', 'secretarial', 'hrms']
+import { SAAS_PRODUCTS } from '../lib/products.js'
 const envs = [
   { value: 'sandbox',    label: 'Sandbox' },
   { value: 'gh',         label: 'GH / Staging' },
@@ -97,7 +96,7 @@ export default function TargetProfileForm() {
           <div>
             <label className="qa-label">Product</label>
             <select className="qa-input" value={form.product_name} onChange={onChange('product_name')}>
-              {products.map((p) => <option key={p} value={p}>{p}</option>)}
+              {SAAS_PRODUCTS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </div>
           <div>

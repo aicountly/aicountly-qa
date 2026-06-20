@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, v1 } from '../lib/api.js'
 import { fmtDate } from '../lib/format.js'
 import FilterBar from '../components/FilterBar.jsx'
+import { PRODUCT_FILTER_OPTIONS } from '../lib/products.js'
 import { Link } from 'react-router-dom'
 
 export default function QaReports() {
@@ -20,7 +21,7 @@ export default function QaReports() {
         onChange={setFilters}
         fields={[
           { key: 'qa_run_id', label: 'QA Run ID', placeholder: 'QA-RUN-…' },
-          { key: 'product',   label: 'Product', options: ['books', 'gh-books', 'sandbox', 'my', 'manage', 'auditor', 'fr', 'secretarial', 'hrms'].map((p) => ({ value: p, label: p })) },
+          { key: 'product',   label: 'Product', options: PRODUCT_FILTER_OPTIONS },
           { key: 'kind',      label: 'Kind', options: [{ value: 'session', label: 'session' }, { value: 'final', label: 'final' }] },
         ]}
       />

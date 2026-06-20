@@ -5,8 +5,7 @@ import { api, v1 } from '../lib/api.js'
 import { EnvBadge, StatusBadge } from '../components/Badges.jsx'
 import { fmtDate } from '../lib/format.js'
 import FilterBar from '../components/FilterBar.jsx'
-
-const products = ['books', 'gh-books', 'sandbox', 'my', 'manage', 'auditor', 'fr', 'secretarial', 'hrms']
+import { PRODUCT_FILTER_OPTIONS } from '../lib/products.js'
 const envs = ['sandbox', 'gh', 'prod_basic', 'prod_full']
 const statuses = ['pending', 'running', 'completed', 'failed', 'cancelled']
 
@@ -25,7 +24,7 @@ export default function QaRuns() {
         values={filters}
         onChange={setFilters}
         fields={[
-          { key: 'product',     label: 'Product',     options: products.map((p) => ({ value: p, label: p })) },
+          { key: 'product',     label: 'Product',     options: PRODUCT_FILTER_OPTIONS },
           { key: 'environment', label: 'Environment', options: envs.map((e) => ({ value: e, label: e })) },
           { key: 'status',      label: 'Status',      options: statuses.map((s) => ({ value: s, label: s })) },
           { key: 'from',        label: 'From',        type: 'date' },

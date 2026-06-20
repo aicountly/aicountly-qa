@@ -4,6 +4,7 @@ import { api, v1 } from '../lib/api.js'
 import { SeverityBadge } from '../components/Badges.jsx'
 import { fmtDate } from '../lib/format.js'
 import FilterBar from '../components/FilterBar.jsx'
+import { PRODUCT_FILTER_OPTIONS } from '../lib/products.js'
 
 const severities = ['critical', 'high', 'medium', 'low', 'warning']
 const statuses = ['open', 'investigating', 'closed']
@@ -23,7 +24,7 @@ export default function ErrorRegister() {
         onChange={setFilters}
         fields={[
           { key: 'severity', label: 'Severity', options: severities.map((s) => ({ value: s, label: s })) },
-          { key: 'product',  label: 'Product',  options: ['books', 'gh-books', 'sandbox', 'my', 'manage', 'auditor', 'fr', 'secretarial', 'hrms'].map((p) => ({ value: p, label: p })) },
+          { key: 'product',  label: 'Product',  options: PRODUCT_FILTER_OPTIONS },
           { key: 'status',   label: 'Status',   options: statuses.map((s) => ({ value: s, label: s })) },
         ]}
       />
