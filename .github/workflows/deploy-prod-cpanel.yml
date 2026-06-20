@@ -1,10 +1,7 @@
-name: Deploy to cPanel via SSH (Production)
+name: Deploy to cPanel via SSH (manual Production)
 
-# Trigger options:
-#   1. Manual via Actions UI (`workflow_dispatch`) — choose run_migrations.
-#   2. Push a tag matching `deploy-prod-*` — fires automatically.
-#        - `deploy-prod-migrate-*` → also runs `php spark migrate` + seeders.
-#        - `deploy-prod-*`         → code-only deploy, no DB changes.
+# Manual-only. Trigger via Actions UI → Run workflow.
+# Pushing to main or pushing tags does NOT auto-deploy to cPanel.
 on:
   workflow_dispatch:
     inputs:
@@ -13,9 +10,6 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    tags:
-      - "deploy-prod-*"
 
 concurrency:
   group: cpanel-deploy
@@ -185,7 +179,7 @@ jobs:
           echo "Deployed server-php → ${REMOTE_ROOT}/api"
 
       - name: Run database migrations + seeds on first deploy
-        if: ${{ inputs.run_migrations == true || github.event.inputs.run_migrations == 'true' || startsWith(github.ref, 'refs/tags/deploy-prod-migrate-') }}
+        if: ${{ inputs.run_migrations == true || github.event.inputs.run_migrations == 'true' }}
         run: |
           REMOTE_ROOT="${CPANEL_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${CPANEL_SSH_PORT}" ${SSH_OPTS} "${CPANEL_SSH_USER}@${CPANEL_SSH_HOST}")
