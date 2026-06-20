@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { api, setToken, v1 } from './api'
+import { api, getToken, setToken, v1 } from './api'
 
 const AuthCtx = createContext(null)
 
@@ -8,6 +8,11 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
+    if (!getToken()) {
+      setUser(null)
+      setLoading(false)
+      return
+    }
     try {
       const { data } = await api.get(v1('/me'))
       setUser(data?.data ?? null)
@@ -25,7 +30,9 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const { data } = await api.post(v1('/auth/login'), { email, password })
     if (!data?.ok) throw new Error(data?.error || 'Login failed')
-    setToken(data.data.token)
+    const token = data?.data?.token
+    if (!token) throw new Error('Login succeeded but no token was returned')
+    setToken(token)
     setUser(data.data.user)
     return data.data.user
   }, [])

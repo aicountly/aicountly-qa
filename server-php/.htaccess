@@ -1,6 +1,10 @@
 RewriteEngine On
 RewriteBase /api/
 
+# Pass Authorization header to PHP (required for JWT on Apache/CGI/FPM)
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
 # Block direct access to sensitive paths (CodeIgniter layout)
 RewriteRule ^(app|database|writable|vendor)/ - [F,L]
 

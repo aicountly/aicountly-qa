@@ -1,9 +1,9 @@
 import axios from 'axios'
 
-const baseURL = import.meta.env.VITE_API_URL || '/api'
+const baseURL = (import.meta.env.VITE_API_URL || '/api').replace(/\/v1\/?$/, '').replace(/\/$/, '')
 
 export const api = axios.create({
-  baseURL: baseURL.replace(/\/$/, ''),
+  baseURL,
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -21,7 +21,13 @@ export function setToken(token) {
 
 api.interceptors.request.use((config) => {
   const t = getToken()
-  if (t) config.headers.Authorization = `Bearer ${t}`
+  if (t) {
+    if (typeof config.headers?.set === 'function') {
+      config.headers.set('Authorization', `Bearer ${t}`)
+    } else {
+      config.headers.Authorization = `Bearer ${t}`
+    }
+  }
   return config
 })
 
@@ -29,8 +35,11 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
+      const hadToken = getToken()
       setToken('')
-      if (!window.location.pathname.endsWith('/login')) {
+      const onLogin = window.location.pathname.endsWith('/login')
+      // Only hard-redirect when a session existed (expired token), not for anonymous /me probes
+      if (hadToken && !onLogin) {
         window.location.assign('/login')
       }
     }
