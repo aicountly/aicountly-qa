@@ -46,7 +46,7 @@ foreach ($vars as $key => $val) {
     if ($key === 'QA_DB_PASSWORD') {
         echo $key . '=*** (' . strlen($val) . " chars)\n";
     } else {
-        $shown = $val === '' ? '(EMPTY — set in .env or GitHub secret QA_DB_*)' : $val;
+        $shown = $val === '' ? '(EMPTY — set in api/.env on the server)' : $val;
         echo $key . '=' . $shown . "\n";
     }
 }
@@ -60,7 +60,7 @@ foreach (['QA_DB_HOST', 'QA_DB_NAME', 'QA_DB_USER', 'QA_DB_PASSWORD'] as $key) {
 
 if ($missing !== []) {
     fwrite(STDERR, "\nERROR: missing " . implode(', ', $missing) . "\n");
-    fwrite(STDERR, "Fix api/.env on the server or re-run the cPanel deploy workflow with QA_DB_* secrets set.\n");
+    fwrite(STDERR, "Fix api/.env on the server (copy from .env.example if needed).\n");
     exit(1);
 }
 
