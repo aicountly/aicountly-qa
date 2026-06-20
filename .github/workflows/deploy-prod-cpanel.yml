@@ -82,35 +82,89 @@ jobs:
           test -d vendor/codeigniter4/framework || (echo "CI4 framework missing after install" && exit 1)
           echo "Composer dependencies installed: $(ls -1 vendor | wc -l) packages"
 
+      - name: Validate required database secrets
+        env:
+          QA_DB_HOST: ${{ secrets.QA_DB_HOST }}
+          QA_DB_NAME: ${{ secrets.QA_DB_NAME }}
+          QA_DB_USER: ${{ secrets.QA_DB_USER }}
+          QA_DB_PASSWORD: ${{ secrets.QA_DB_PASSWORD }}
+        run: |
+          missing=0
+          for var in QA_DB_HOST QA_DB_NAME QA_DB_USER QA_DB_PASSWORD; do
+            val="${!var}"
+            if [ -z "$val" ]; then
+              echo "::error::GitHub secret $var is empty — migrations cannot run."
+              missing=1
+            else
+              echo "$var is set (length ${#val})"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Write server-php production .env from secrets
         working-directory: server-php
+        env:
+          QA_API_BASE_URL: ${{ secrets.QA_API_BASE_URL }}
+          QA_DB_HOST: ${{ secrets.QA_DB_HOST }}
+          QA_DB_PORT: ${{ secrets.QA_DB_PORT }}
+          QA_DB_NAME: ${{ secrets.QA_DB_NAME }}
+          QA_DB_USER: ${{ secrets.QA_DB_USER }}
+          QA_DB_PASSWORD: ${{ secrets.QA_DB_PASSWORD }}
+          QA_JWT_SECRET: ${{ secrets.QA_JWT_SECRET }}
+          QA_WORKER_TOKEN: ${{ secrets.QA_WORKER_TOKEN }}
+          QA_VAULT_KEY: ${{ secrets.QA_VAULT_KEY }}
+          QA_ALLOWED_ORIGINS: ${{ secrets.QA_ALLOWED_ORIGINS }}
+          QA_OWNER_EMAIL: ${{ secrets.QA_OWNER_EMAIL }}
+          QA_OWNER_NAME: ${{ secrets.QA_OWNER_NAME }}
+          QA_OWNER_PASSWORD: ${{ secrets.QA_OWNER_PASSWORD }}
         run: |
-          {
-            echo "CI_ENVIRONMENT=production"
-            echo "app.baseURL=${{ secrets.QA_API_BASE_URL }}"
-            echo "app.indexPage="
-            echo ""
-            echo "QA_DB_HOST=${{ secrets.QA_DB_HOST }}"
-            echo "QA_DB_PORT=${{ secrets.QA_DB_PORT }}"
-            echo "QA_DB_NAME=${{ secrets.QA_DB_NAME }}"
-            echo "QA_DB_USER=${{ secrets.QA_DB_USER }}"
-            echo "QA_DB_PASSWORD=${{ secrets.QA_DB_PASSWORD }}"
-            echo ""
-            echo "QA_JWT_SECRET=${{ secrets.QA_JWT_SECRET }}"
-            echo "QA_JWT_TTL_MINUTES=720"
-            echo "QA_WORKER_TOKEN=${{ secrets.QA_WORKER_TOKEN }}"
-            echo "QA_VAULT_KEY=${{ secrets.QA_VAULT_KEY }}"
-            echo ""
-            echo "QA_REPORTS_DIR=../qa-reports"
-            echo ""
-            echo "QA_ALLOWED_ORIGINS=${{ secrets.QA_ALLOWED_ORIGINS }}"
-            echo ""
-            echo "QA_OWNER_EMAIL=${{ secrets.QA_OWNER_EMAIL }}"
-            echo "QA_OWNER_NAME=${{ secrets.QA_OWNER_NAME }}"
-            echo "QA_OWNER_PASSWORD=${{ secrets.QA_OWNER_PASSWORD }}"
-          } > .env
+          # Quote values so special chars ($ @ # spaces) parse correctly in CodeIgniter .env
+          python3 << 'PY'
+          import os
+
+          def dotenv(v):
+              if v is None:
+                  v = ""
+              v = str(v)
+              if v == "":
+                  return ""
+              if any(c in v for c in ' "#$\\'):
+                  return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+              return v
+
+          lines = [
+              "CI_ENVIRONMENT=production",
+              f"app.baseURL={dotenv(os.environ.get('QA_API_BASE_URL', ''))}",
+              "app.indexPage=",
+              "",
+              f"QA_DB_HOST={dotenv(os.environ.get('QA_DB_HOST', ''))}",
+              f"QA_DB_PORT={dotenv(os.environ.get('QA_DB_PORT', '5432'))}",
+              f"QA_DB_NAME={dotenv(os.environ.get('QA_DB_NAME', ''))}",
+              f"QA_DB_USER={dotenv(os.environ.get('QA_DB_USER', ''))}",
+              f"QA_DB_PASSWORD={dotenv(os.environ.get('QA_DB_PASSWORD', ''))}",
+              "",
+              f"QA_JWT_SECRET={dotenv(os.environ.get('QA_JWT_SECRET', ''))}",
+              "QA_JWT_TTL_MINUTES=720",
+              f"QA_WORKER_TOKEN={dotenv(os.environ.get('QA_WORKER_TOKEN', ''))}",
+              f"QA_VAULT_KEY={dotenv(os.environ.get('QA_VAULT_KEY', ''))}",
+              "",
+              "QA_REPORTS_DIR=../qa-reports",
+              "",
+              f"QA_ALLOWED_ORIGINS={dotenv(os.environ.get('QA_ALLOWED_ORIGINS', ''))}",
+              "",
+              f"QA_OWNER_EMAIL={dotenv(os.environ.get('QA_OWNER_EMAIL', ''))}",
+              f"QA_OWNER_NAME={dotenv(os.environ.get('QA_OWNER_NAME', 'QA Owner'))}",
+              f"QA_OWNER_PASSWORD={dotenv(os.environ.get('QA_OWNER_PASSWORD', ''))}",
+              "",
+          ]
+          with open(".env", "w", encoding="utf-8", newline="\n") as f:
+              f.write("\n".join(lines))
+          PY
           chmod 600 .env
           echo "Production .env written ($(wc -l < .env) lines)"
+          grep '^QA_DB_' .env | sed 's/=.*/=***set***/'
 
       - name: Setup SSH key
         env:
@@ -182,6 +236,17 @@ jobs:
 
           echo "Rsynced server-php → ${REMOTE_ROOT}/api"
 
+      - name: Verify deployed .env on server
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          if ! "${SSH_CMD[@]}" "test -f \"${REMOTE_ROOT}/api/.env\""; then
+            echo "::error::.env missing at ${REMOTE_ROOT}/api/.env after rsync — migrations cannot run."
+            exit 1
+          fi
+          "${SSH_CMD[@]}" "wc -c \"${REMOTE_ROOT}/api/.env\" && grep -c '^QA_DB_' \"${REMOTE_ROOT}/api/.env\" || true"
+          echo ".env present on server"
+
       - name: Ensure writable directory exists (WRITEPATH)
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
@@ -193,6 +258,20 @@ jobs:
           fi
           echo "writable OK: ${REMOTE_ROOT}/api/writable"
 
+      - name: Diagnose database on server
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && \
+            echo '--- PHP ---' && php -v | head -1 && \
+            echo '--- pgsql extensions ---' && (php -m | grep -i pgsql || echo 'MISSING: install pdo_pgsql for PHP CLI in cPanel') && \
+            echo '--- .env ---' && (test -f .env && echo '.env exists' || echo 'MISSING .env') && \
+            (grep '^QA_DB_' .env 2>/dev/null | sed 's/=.*/=***/' || echo 'no QA_DB_* keys in .env') && \
+            echo '--- PDO smoke test ---' && \
+            CI_ENVIRONMENT=development php scripts/db-ping.php 2>&1 || true && \
+            echo '--- spark migrate:status ---' && \
+            CI_ENVIRONMENT=development php spark migrate:status 2>&1 || true"
+
       # migrate: applies pending migrations; seeders run only when migrate succeeds
       - name: Run database migrations
         id: db_migrate
@@ -200,8 +279,18 @@ jobs:
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           echo "Running php spark migrate on ${REMOTE_ROOT}/api ..."
-          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark migrate 2>&1"; then
-            echo "::error::php spark migrate failed. Check QA_DB_* secrets and that PostgreSQL is reachable from cPanel (pdo_pgsql enabled for PHP CLI)."
+          set +e
+          MIGRATE_OUT=$("${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark migrate 2>&1")
+          MIGRATE_RC=$?
+          set -e
+          echo "$MIGRATE_OUT"
+          if [ "$MIGRATE_RC" -ne 0 ]; then
+            echo "::error::php spark migrate failed (exit $MIGRATE_RC)."
+            echo "Common fixes: (1) quote passwords with \$ in GitHub secrets — redeploy after this workflow update"
+            echo "(2) QA_DB_HOST must be reachable from cPanel (not localhost if DB is on another VPS)"
+            echo "(3) enable pdo_pgsql + pgsql for PHP CLI in cPanel MultiPHP"
+            echo "(4) allow cPanel server IP in PostgreSQL pg_hba / firewall"
+            "${SSH_CMD[@]}" "tail -n 50 \"${REMOTE_ROOT}/api/writable/logs/\"*.log 2>/dev/null || echo 'no writable/logs/*.log yet'" || true
             echo "migrate_ok=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
