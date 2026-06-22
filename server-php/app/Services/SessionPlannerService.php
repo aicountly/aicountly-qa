@@ -93,7 +93,7 @@ class SessionPlannerService
         $plans   = new SessionPlansModel();
         $planId  = $plans->insert([
             'qa_run_id'  => $qaRunId,
-            'plan_json'  => json_encode($plan),
+            'plan_json'  => $plan,
             'status'     => 'draft',
         ], true);
 

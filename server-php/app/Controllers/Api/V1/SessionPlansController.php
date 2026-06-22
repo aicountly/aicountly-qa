@@ -52,7 +52,7 @@ class SessionPlansController extends ResourceController
         if (! isset($body['plan_json'])) {
             return $this->failValidationErrors('plan_json required.');
         }
-        $this->model->update($id, ['plan_json' => json_encode($body['plan_json'])]);
+        $this->model->update($id, ['plan_json' => $body['plan_json']]);
         Services::auditService()->log('session_plan_update', ['subject_kind' => 'session_plan', 'subject_id' => $id]);
         return $this->respond(['ok' => true]);
     }

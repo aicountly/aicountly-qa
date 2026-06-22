@@ -1,17 +1,32 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
 import { EnvBadge, StatusBadge } from '../components/Badges.jsx'
 import { useAuth } from '../lib/auth.jsx'
 
 export default function TargetProfiles() {
+  const qc = useQueryClient()
   const { hasRole } = useAuth()
   const canEdit = hasRole(['Owner', 'QA Manager'])
+  const canDelete = hasRole(['Owner'])
+  const showActions = canEdit || canDelete
 
   const { data, isLoading } = useQuery({
     queryKey: ['target-profiles'],
     queryFn: async () => (await api.get(v1('/target-profiles'))).data?.data ?? [],
   })
+
+  const remove = useMutation({
+    mutationFn: async (id) => api.delete(v1(`/target-profiles/${id}`)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['target-profiles'] }),
+  })
+
+  function handleDelete(profile) {
+    if (!window.confirm(`Delete target profile "${profile.profile_name}"? This cannot be undone.`)) {
+      return
+    }
+    remove.mutate(profile.id)
+  }
 
   return (
     <div className="space-y-4">
@@ -32,7 +47,7 @@ export default function TargetProfiles() {
           <thead>
             <tr>
               <th>Profile</th><th>Product</th><th>Environment</th><th>Base URL</th><th>Data Creation</th><th>Status</th>
-              {canEdit && <th></th>}
+              {showActions && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -49,9 +64,21 @@ export default function TargetProfiles() {
                     : <span className="qa-badge bg-neutral-100 text-neutral-600">blocked</span>}
                 </td>
                 <td><StatusBadge status={p.status} /></td>
-                {canEdit && (
-                  <td className="text-right">
-                    <Link to={`/target-profiles/${p.id}/edit`} className="text-aicountly-700 hover:underline text-sm">Edit</Link>
+                {showActions && (
+                  <td className="text-right space-x-3">
+                    {canEdit && (
+                      <Link to={`/target-profiles/${p.id}/edit`} className="text-aicountly-700 hover:underline text-sm">Edit</Link>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(p)}
+                        disabled={remove.isPending}
+                        className="text-red-600 hover:underline text-sm disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>
