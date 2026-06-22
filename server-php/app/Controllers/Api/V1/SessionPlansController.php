@@ -2,6 +2,7 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Models\RunsModel;
 use App\Models\SessionPlansModel;
 use App\Models\SessionsModel;
 use CodeIgniter\RESTful\ResourceController;
@@ -87,6 +88,10 @@ class SessionPlansController extends ResourceController
                 'scope_json'      => $entry['scope'] ?? [],
                 'status'          => 'queued',
             ]);
+        }
+
+        if (count($entries) > 0) {
+            (new RunsModel())->update($plan['qa_run_id'], ['status' => 'running']);
         }
 
         Services::auditService()->log('session_approval', [

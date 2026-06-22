@@ -1,11 +1,16 @@
-import { useQuery } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
 import { EnvBadge, SeverityBadge, StatusBadge } from '../components/Badges.jsx'
 import { fmtDate } from '../lib/format.js'
+import { useAuth } from '../lib/auth.jsx'
 
 export default function QaRunDetail() {
   const { id } = useParams()
+  const nav = useNavigate()
+  const qc = useQueryClient()
+  const { hasRole } = useAuth()
+  const canDelete = hasRole(['Owner'])
 
   const run = useQuery({
     queryKey: ['run', id],
@@ -21,6 +26,21 @@ export default function QaRunDetail() {
     queryKey: ['reports', id],
     queryFn: async () => (await api.get(v1(`/reports/${id}`))).data?.data ?? [],
   })
+
+  const remove = useMutation({
+    mutationFn: async () => api.delete(v1(`/runs/${id}`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['runs'] })
+      nav('/qa-runs')
+    },
+  })
+
+  function handleDelete() {
+    if (!window.confirm(`Delete QA run "${id}"? This removes its sessions and plans.`)) {
+      return
+    }
+    remove.mutate()
+  }
 
   if (run.isLoading) return <div className="text-sm text-neutral-500">Loading…</div>
   if (!run.data) return <div className="text-sm text-red-700">Run not found.</div>
@@ -42,6 +62,16 @@ export default function QaRunDetail() {
           </div>
           <div className="flex items-center gap-2">
             <StatusBadge status={r.status} />
+            {canDelete && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={remove.isPending}
+                className="text-red-600 hover:underline text-sm disabled:opacity-50"
+              >
+                Delete
+              </button>
+            )}
             {finalReport && (
               <>
                 <a
@@ -66,9 +96,9 @@ export default function QaRunDetail() {
             </Link>
           </p>
         )}
-        {r.status === 'pending' && queuedCount > 0 && (
+        {r.status === 'running' && queuedCount > 0 && (
           <p className="mt-3 text-sm text-neutral-600">
-            {queuedCount} session{queuedCount === 1 ? '' : 's'} queued. The run will start when the QA worker polls and claims the next session.
+            {queuedCount} session{queuedCount === 1 ? '' : 's'} queued. Execution begins when the QA worker claims the next session.
           </p>
         )}
       </div>
