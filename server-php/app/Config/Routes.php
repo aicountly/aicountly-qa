@@ -56,9 +56,9 @@ $routes->group('v1', static function ($routes) {
         $routes->resource('users', ['controller' => 'Api\\V1\\UsersController']);
         $routes->resource('roles', ['controller' => 'Api\\V1\\RolesController']);
 
-        $routes->resource('target-profiles', ['controller' => 'Api\\V1\\TargetProfilesController']);
         $routes->put('target-profiles/(:num)/credentials', 'Api\\V1\\CredentialsController::set/$1', ['filter' => 'role:Owner,QA Manager']);
         $routes->delete('target-profiles/(:num)/credentials', 'Api\\V1\\CredentialsController::clear/$1', ['filter' => 'role:Owner']);
+        $routes->resource('target-profiles', ['controller' => 'Api\\V1\\TargetProfilesController']);
 
         $routes->post('master-prompts', 'Api\\V1\\MasterPromptsController::create', ['filter' => 'role:Owner,QA Manager']);
         $routes->get('master-prompts', 'Api\\V1\\MasterPromptsController::index');

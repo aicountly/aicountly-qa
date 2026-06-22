@@ -104,7 +104,7 @@ class TargetProfilesController extends ResourceController
         }
         foreach (['allowed_domains', 'allowed_modules', 'ip_restriction'] as $f) {
             if (isset($body[$f])) {
-                $row[$f] = is_string($body[$f]) ? $body[$f] : json_encode($body[$f]);
+                $row[$f] = $this->normalizeJsonArray($body[$f]);
             }
         }
         foreach (['data_creation_allowed', 'production_restriction'] as $f) {
@@ -119,6 +119,20 @@ class TargetProfilesController extends ResourceController
             $row['status']                 = $row['status'] ?? 'active';
         }
         return $row;
+    }
+
+    private function normalizeJsonArray(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && $value !== '') {
+            $decoded = json_decode($value, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
     }
 
     private function roleAllowed(array $roles): bool
