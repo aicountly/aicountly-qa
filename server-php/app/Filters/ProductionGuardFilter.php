@@ -44,7 +44,7 @@ class ProductionGuardFilter implements FilterInterface
         }
 
         // Allowed under prod_full only when Owner unlock is enabled.
-        $unlock = (new SettingsModel())->get('production_unlock', ['enabled' => false]);
+        $unlock = (new SettingsModel())->getSetting('production_unlock', ['enabled' => false]);
         if (! ($unlock['enabled'] ?? false)) {
             return service('response')->setStatusCode(423)->setJSON([
                 'ok'          => false,

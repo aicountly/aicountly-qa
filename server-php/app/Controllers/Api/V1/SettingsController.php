@@ -17,7 +17,7 @@ class SettingsController extends BaseApiController
         $body = $this->input();
         $m = new SettingsModel();
         foreach ($body as $key => $val) {
-            $m->set((string) $key, $val, $this->user()['id'] ?? null);
+            $m->setSetting((string) $key, $val, $this->user()['id'] ?? null);
         }
         $this->audit('settings_update', ['metadata' => ['keys' => array_keys($body)]]);
         return $this->ok((new SettingsModel())->all());

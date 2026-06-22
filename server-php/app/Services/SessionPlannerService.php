@@ -72,7 +72,7 @@ class SessionPlannerService
         }
 
         $settings    = new SettingsModel();
-        $llmEnabled  = (bool) $settings->get('llm_enabled', false);
+        $llmEnabled  = (bool) $settings->getSetting('llm_enabled', false);
 
         // LLM hook — disabled by default. When enabled it reranks/edits the list.
         if ($kind === 'llm' || ($kind === 'hybrid' && $llmEnabled)) {

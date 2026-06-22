@@ -14,7 +14,7 @@ class SettingsModel extends Model
 
     protected array $casts = ['value_json' => 'json-array'];
 
-    public function get(string $key, mixed $default = null): mixed
+    public function getSetting(string $key, mixed $default = null): mixed
     {
         $row = $this->where('key', $key)->first();
         if (! $row) {
@@ -24,7 +24,7 @@ class SettingsModel extends Model
         return $val ?? $default;
     }
 
-    public function set(string $key, mixed $value, ?int $userId = null): void
+    public function setSetting(string $key, mixed $value, ?int $userId = null): void
     {
         $row = $this->where('key', $key)->first();
         if ($row) {
