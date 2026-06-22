@@ -28,6 +28,23 @@ class TargetProfilesModel extends Model
     ];
 
     protected $afterFind = ['decodeJsonArrayFields'];
+    protected $beforeInsert = ['encodeJsonArrayFields'];
+    protected $beforeUpdate = ['encodeJsonArrayFields'];
+
+    protected function encodeJsonArrayFields(array $data): array
+    {
+        if (! isset($data['data'])) {
+            return $data;
+        }
+
+        foreach ($this->jsonArrayFields as $field) {
+            if (array_key_exists($field, $data['data']) && is_array($data['data'][$field])) {
+                $data['data'][$field] = json_encode($data['data'][$field]);
+            }
+        }
+
+        return $data;
+    }
 
     protected function decodeJsonArrayFields(array $data): array
     {
