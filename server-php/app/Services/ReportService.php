@@ -100,7 +100,7 @@ class ReportService
         (new RunsModel())->update($qaRunId, [
             'status'       => $totals['failed'] > 0 ? 'failed' : 'completed',
             'completed_at' => date('Y-m-d H:i:s'),
-            'summary_json' => json_encode($totals),
+            'summary_json' => $totals,
         ]);
 
         $reportId = (new ReportsModel())->insert([
