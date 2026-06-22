@@ -26,6 +26,8 @@ export default function QaRunDetail() {
   if (!run.data) return <div className="text-sm text-red-700">Run not found.</div>
 
   const r = run.data
+  const sessions = r.sessions || []
+  const queuedCount = sessions.filter((s) => s.status === 'queued').length
   const finalReport = (reports.data || []).find((x) => x.kind === 'final')
 
   return (
@@ -56,6 +58,19 @@ export default function QaRunDetail() {
             )}
           </div>
         </div>
+        {r.status === 'pending' && sessions.length === 0 && (
+          <p className="mt-3 text-sm text-neutral-600">
+            Waiting for session plan approval.{' '}
+            <Link to={`/session-plans?qa_run_id=${encodeURIComponent(r.qa_run_id)}`} className="text-aicountly-700 hover:underline">
+              Review and approve the session plan →
+            </Link>
+          </p>
+        )}
+        {r.status === 'pending' && queuedCount > 0 && (
+          <p className="mt-3 text-sm text-neutral-600">
+            {queuedCount} session{queuedCount === 1 ? '' : 's'} queued. The run will start when the QA worker polls and claims the next session.
+          </p>
+        )}
       </div>
 
       <div className="qa-card overflow-x-auto p-0">

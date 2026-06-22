@@ -84,7 +84,7 @@ class SessionPlansController extends ResourceController
                 'module'          => $entry['module']     ?? null,
                 'sub_module'      => $entry['sub_module'] ?? null,
                 'order_index'     => (int) ($entry['order_index'] ?? ($i + 1)),
-                'scope_json'      => json_encode($entry['scope'] ?? []),
+                'scope_json'      => $entry['scope'] ?? [],
                 'status'          => 'queued',
             ]);
         }

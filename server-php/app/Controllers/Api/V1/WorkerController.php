@@ -42,8 +42,14 @@ class WorkerController extends BaseApiController
 
         $template = $this->loadTemplate($profile['product_name'], (string) $session['template_code']);
 
-        // Mark session running.
+        // Mark session running and start the QA run clock on first pickup.
         (new SessionsModel())->update($session['id'], ['status' => 'running', 'started_at' => date('Y-m-d H:i:s')]);
+        if ($run && ($run['status'] ?? '') === 'pending') {
+            (new RunsModel())->update($session['qa_run_id'], [
+                'status'     => 'running',
+                'started_at' => date('Y-m-d H:i:s'),
+            ]);
+        }
 
         Services::auditService()->log('session_execution_start', [
             'qa_run_id'  => $session['qa_run_id'],
