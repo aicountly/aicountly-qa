@@ -8,6 +8,7 @@ use App\Models\ReportsModel;
 use App\Models\RunsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
+use Config\Services;
 
 class DashboardController extends BaseApiController
 {
@@ -66,6 +67,12 @@ class DashboardController extends BaseApiController
             'module_failures' => $moduleFailures,
             'target_health'   => $targetHealth,
             'recent_reports'  => $recentReports,
+            'worker'          => Services::workerStatus()->status(),
         ]);
+    }
+
+    public function workerStatus()
+    {
+        return $this->ok(Services::workerStatus()->status());
     }
 }

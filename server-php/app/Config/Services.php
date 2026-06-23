@@ -8,6 +8,7 @@ use App\Libraries\Vault;
 use App\Services\AuditService;
 use App\Services\ReportService;
 use App\Services\SessionPlannerService;
+use App\Services\WorkerStatusService;
 use CodeIgniter\Config\BaseService;
 
 class Services extends BaseService
@@ -58,5 +59,13 @@ class Services extends BaseService
             return static::getSharedInstance('auditService') ?? static::auditService(false);
         }
         return new AuditService();
+    }
+
+    public static function workerStatus(bool $getShared = true): WorkerStatusService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('workerStatus') ?? static::workerStatus(false);
+        }
+        return new WorkerStatusService();
     }
 }

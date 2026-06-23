@@ -31,6 +31,12 @@ export async function fetchNextSession(): Promise<NextSessionPayload> {
   return (data?.data ?? data) as NextSessionPayload
 }
 
+export async function pingWorker(): Promise<void> {
+  await api().post(`/v1/worker/ping`, null, {
+    params: { worker_id: config.workerId },
+  })
+}
+
 export async function heartbeat(sessionId: number): Promise<void> {
   await api().post(`/v1/worker/sessions/${sessionId}/heartbeat`)
 }

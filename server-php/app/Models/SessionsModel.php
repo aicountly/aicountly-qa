@@ -103,6 +103,8 @@ class SessionsModel extends Model
      */
     public function claimNext(string $workerId): ?array
     {
+        $this->requeueStaleClaims(10);
+
         $db = $this->db;
         $db->transStart();
 
@@ -138,5 +140,20 @@ class SessionsModel extends Model
         }
 
         return $row;
+    }
+
+    /** Re-queue sessions left in claimed state after a worker crash. */
+    public function requeueStaleClaims(int $minutes = 10): void
+    {
+        $this->db->query(
+            "UPDATE qa_sessions
+             SET status = 'queued',
+                 claimed_by_worker = NULL,
+                 claimed_at = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE status = 'claimed'
+             AND claimed_at IS NOT NULL
+             AND claimed_at < (CURRENT_TIMESTAMP - INTERVAL '{$minutes} minutes')"
+        );
     }
 }

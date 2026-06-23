@@ -16,7 +16,7 @@
  * Always runs ONE session at a time. Never parallel.
  */
 
-import { fetchNextSession } from './apiClient.js'
+import { fetchNextSession, pingWorker } from './apiClient.js'
 import { runOneSession } from './runner/sessionRunner.js'
 import { buildFinalReport } from './reporter/finalReportBuilder.js'
 import { config, validateConfig } from './utils/config.js'
@@ -94,6 +94,7 @@ async function main(): Promise<void> {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         try {
+          await pingWorker().catch(() => {})
           const p = await fetchNextSession()
           if (p.session) {
             if (mode === 'books' && p.profile?.product_name !== 'books') {
