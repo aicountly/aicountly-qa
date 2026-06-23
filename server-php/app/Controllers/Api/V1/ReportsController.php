@@ -34,6 +34,39 @@ class ReportsController extends BaseApiController
         return $this->serve($qaRunId, 'json');
     }
 
+    public function sessionHtml(int $sessionId)
+    {
+        return $this->serveSession($sessionId, 'html');
+    }
+
+    public function sessionJson(int $sessionId)
+    {
+        return $this->serveSession($sessionId, 'json');
+    }
+
+    private function serveSession(int $sessionId, string $kind)
+    {
+        $row = (new ReportsModel())->where('session_id', $sessionId)->where('kind', 'session')
+            ->orderBy('generated_at', 'DESC')->first();
+        if (! $row) {
+            return $this->fail('Session report not yet generated.', 404);
+        }
+        Services::auditService()->log('report_viewed', [
+            'qa_run_id'    => $row['qa_run_id'] ?? null,
+            'session_id'   => $sessionId,
+            'subject_kind' => 'report',
+            'subject_id'   => $row['id'],
+            'metadata'     => ['kind' => $kind, 'scope' => 'session'],
+        ]);
+        $path = $kind === 'html' ? ($row['html_path'] ?? '') : ($row['json_path'] ?? '');
+        if ($path === '' || ! is_file($path)) {
+            return $this->fail('Report file missing on disk.', 410);
+        }
+        $mime = $kind === 'html' ? 'text/html' : 'application/json';
+
+        return $this->response->setHeader('Content-Type', $mime)->setBody((string) file_get_contents($path));
+    }
+
     private function serve(string $qaRunId, string $kind)
     {
         $row = (new ReportsModel())->where('qa_run_id', $qaRunId)->where('kind', 'final')

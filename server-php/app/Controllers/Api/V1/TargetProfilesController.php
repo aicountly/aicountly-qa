@@ -14,6 +14,20 @@ class TargetProfilesController extends ResourceController
     public function index()
     {
         $rows = $this->model->orderBy('product_name')->orderBy('profile_name')->findAll();
+        $ids  = array_map(static fn ($r) => (int) $r['id'], $rows);
+        $withCreds = [];
+        if ($ids !== []) {
+            $credRows = $this->model->db->table('qa_credentials')
+                ->select('target_profile_id')
+                ->whereIn('target_profile_id', $ids)
+                ->get()->getResultArray();
+            foreach ($credRows as $c) {
+                $withCreds[(int) $c['target_profile_id']] = true;
+            }
+        }
+        foreach ($rows as $i => $row) {
+            $rows[$i]['has_credentials'] = isset($withCreds[(int) $row['id']]);
+        }
         return $this->respond(['ok' => true, 'data' => $rows]);
     }
 

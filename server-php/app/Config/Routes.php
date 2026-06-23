@@ -41,6 +41,7 @@ $routes->group('v1', static function ($routes) {
     // Worker endpoints — separate worker token (long-lived), not user JWT.
     $routes->group('worker', ['filter' => 'worker-auth'], static function ($routes) {
         $routes->get('next-session', 'Api\\V1\\WorkerController::nextSession');
+        $routes->post('ping', 'Api\\V1\\WorkerController::ping');
         $routes->post('sessions/(:num)/claim', 'Api\\V1\\WorkerController::claim/$1');
         $routes->post('sessions/(:num)/heartbeat', 'Api\\V1\\WorkerController::heartbeat/$1');
         $routes->post('sessions/(:num)/result', 'Api\\V1\\WorkerController::postResult/$1');
@@ -77,6 +78,8 @@ $routes->group('v1', static function ($routes) {
         $routes->resource('error-register', ['controller' => 'Api\\V1\\ErrorRegisterController']);
 
         $routes->get('reports', 'Api\\V1\\ReportsController::index');
+        $routes->get('reports/session/(:num)/html', 'Api\\V1\\ReportsController::sessionHtml/$1');
+        $routes->get('reports/session/(:num)/json', 'Api\\V1\\ReportsController::sessionJson/$1');
         $routes->get('reports/(:segment)', 'Api\\V1\\ReportsController::show/$1');
         $routes->get('reports/(:segment)/html', 'Api\\V1\\ReportsController::html/$1');
         $routes->get('reports/(:segment)/json', 'Api\\V1\\ReportsController::json/$1');
@@ -87,5 +90,6 @@ $routes->group('v1', static function ($routes) {
         $routes->get('audit-logs', 'Api\\V1\\AuditLogsController::index');
 
         $routes->get('dashboard/summary', 'Api\\V1\\DashboardController::summary');
+        $routes->get('dashboard/worker-status', 'Api\\V1\\DashboardController::workerStatus');
     });
 });

@@ -24,6 +24,8 @@ class WorkerController extends BaseApiController
     public function nextSession()
     {
         $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        Services::workerStatus()->recordHeartbeat($workerId);
+
         $session  = (new SessionsModel())->claimNext($workerId);
 
         if (! $session) {
@@ -44,7 +46,7 @@ class WorkerController extends BaseApiController
 
         // Mark session running and start the QA run clock on first pickup.
         (new SessionsModel())->update($session['id'], ['status' => 'running', 'started_at' => date('Y-m-d H:i:s')]);
-        if ($run && ($run['status'] ?? '') === 'pending') {
+        if ($run && in_array($run['status'] ?? '', ['pending', 'running'], true) && empty($run['started_at'])) {
             (new RunsModel())->update($session['qa_run_id'], [
                 'status'     => 'running',
                 'started_at' => date('Y-m-d H:i:s'),
@@ -129,11 +131,11 @@ class WorkerController extends BaseApiController
             'passed_count'     => $passed,
             'failed_count'     => $failed,
             'warning_count'    => $warning,
-            'result_json'      => json_encode($body['result_json'] ?? []),
-            'screenshot_paths' => json_encode($body['screenshot_paths'] ?? []),
+            'result_json'      => $body['result_json'] ?? [],
+            'screenshot_paths' => $body['screenshot_paths'] ?? [],
             'trace_path'       => $body['trace_path'] ?? null,
-            'console_errors'   => json_encode($body['console_errors'] ?? []),
-            'network_errors'   => json_encode($body['network_errors'] ?? []),
+            'console_errors'   => $body['console_errors'] ?? [],
+            'network_errors'   => $body['network_errors'] ?? [],
             'suggested_area'   => $body['suggested_area']   ?? null,
             'suggested_prompt' => $body['suggested_prompt'] ?? null,
             'started_at'       => $body['started_at']  ?? null,
@@ -196,6 +198,14 @@ class WorkerController extends BaseApiController
         }
 
         return $this->ok(['report' => $report]);
+    }
+
+    public function ping()
+    {
+        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        Services::workerStatus()->recordHeartbeat($workerId);
+
+        return $this->ok(['ok' => true]);
     }
 
     public function uploadEvidence(int $sessionId)

@@ -83,7 +83,14 @@ export default function TargetProfileForm() {
 
   return (
     <div className="space-y-4">
-      <ProductionBanner environment={form.environment} profileName={form.profile_name} />
+        <ProductionBanner environment={form.environment} profileName={form.profile_name} />
+
+      {isEdit && existing && existing.has_credentials === false && (
+        <div className="max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <p className="font-medium">Credentials not configured</p>
+          <p className="mt-1">Enter the target app password below and save. The QA worker cannot log in until credentials are set.</p>
+        </div>
+      )}
 
       <form
         className="qa-card max-w-3xl space-y-4"

@@ -48,3 +48,12 @@ api.interceptors.response.use(
 )
 
 export const v1 = (path) => `/v1${path.startsWith('/') ? path : `/${path}`}`
+
+/** Base API URL for opening report links (same origin as axios client). */
+export function apiBaseUrl() {
+  return (import.meta.env.VITE_API_URL || '/api').replace(/\/v1\/?$/, '').replace(/\/$/, '')
+}
+
+export function v1Absolute(path) {
+  return `${apiBaseUrl()}${v1(path)}`
+}

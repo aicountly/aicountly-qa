@@ -21,8 +21,27 @@ export default function Dashboard() {
   })
 
   const cards = data?.cards || {}
+  const worker = data?.worker || {}
+  const workerOnline = worker.online === true
+
   return (
     <div className="space-y-4">
+      <div className={`rounded-xl border px-4 py-3 text-sm ${workerOnline ? 'border-aicountly-200 bg-aicountly-50 text-aicountly-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span className="font-semibold">QA Worker: </span>
+            {workerOnline ? (
+              <span>Online{worker.worker_id ? ` (${worker.worker_id})` : ''}</span>
+            ) : (
+              <span>Offline — sessions stay queued until worker.apis.aicountly.com is running</span>
+            )}
+          </div>
+          {worker.last_seen_at && (
+            <span className="text-xs opacity-80">Last seen {fmtRelative(worker.last_seen_at)}</span>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Card k={cards.total_runs ?? '—'}      v="Total QA Runs"      to="/qa-runs" />
         <Card k={cards.passed_sessions ?? '—'} v="Passed Sessions"    accent="border-aicountly-200" />

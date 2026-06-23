@@ -46,17 +46,26 @@ export default function TargetProfiles() {
         <table className="qa-table">
           <thead>
             <tr>
-              <th>Profile</th><th>Product</th><th>Environment</th><th>Base URL</th><th>Data Creation</th><th>Status</th>
+              <th>Profile</th><th>Product</th><th>Environment</th><th>Credentials</th><th>Base URL</th><th>Data Creation</th><th>Status</th>
               {showActions && <th></th>}
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="px-3 py-4 text-neutral-500">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="px-3 py-4 text-neutral-500">Loading…</td></tr>}
             {(data || []).map((p) => (
               <tr key={p.id}>
                 <td className="font-medium text-neutral-900">{p.profile_name}</td>
                 <td>{p.product_name}</td>
                 <td><EnvBadge environment={p.environment} /></td>
+                <td>
+                  {p.has_credentials
+                    ? <span className="qa-badge bg-aicountly-100 text-aicountly-800">set</span>
+                    : (
+                      <span className="qa-badge bg-amber-100 text-amber-900" title="Worker cannot log in until password is saved">
+                        missing
+                      </span>
+                    )}
+                </td>
                 <td className="text-xs text-neutral-500">{p.base_url}</td>
                 <td>
                   {p.data_creation_allowed
@@ -84,7 +93,7 @@ export default function TargetProfiles() {
               </tr>
             ))}
             {!isLoading && (data || []).length === 0 && (
-              <tr><td colSpan={7} className="px-3 py-4 text-neutral-500">No target profiles yet.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-4 text-neutral-500">No target profiles yet.</td></tr>
             )}
           </tbody>
         </table>

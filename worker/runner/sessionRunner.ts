@@ -173,6 +173,9 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
     completedAt,
   })
 
+  const failedSteps = stepResults.filter((s) => !s.ok)
+  const fatalStep   = failedSteps.find((s) => s.kind === 'fatal')
+
   const body: SessionPostBody = {
     status: blockedBySafeGuard ? 'skipped' : report.status,
     severity: report.severity,
@@ -185,6 +188,12 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
       workflow_steps: stepResults.length,
       tables_read: Object.keys(tables),
       blocked_by_safe_guard: blockedBySafeGuard,
+      fatal_error: fatalStep?.error ?? failedSteps[0]?.error ?? null,
+      failed_steps: failedSteps.slice(0, 8).map((s) => ({
+        kind: s.kind,
+        error: s.error ?? null,
+        index: s.index,
+      })),
     },
     screenshot_paths: screenshots.paths(),
     trace_path: tracePath,
