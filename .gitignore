@@ -12,7 +12,6 @@ node_modules/
 
 # Build output
 web/dist/
-worker/dist/
 # Writable runtime dirs (keep skeleton .gitkeep files)
 server-php/writable/cache/*
 !server-php/writable/cache/.gitkeep

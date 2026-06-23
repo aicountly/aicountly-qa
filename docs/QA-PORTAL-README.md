@@ -22,7 +22,7 @@ Three independent processes:
 
 - **web/** — React 19 SPA, served from GitHub Pages (preview) and cPanel `public_html/` (prod).
 - **server-php/** — CodeIgniter 4.6 REST API at `/api`, served from cPanel `public_html/api/`.
-- **worker/** — Long-running Node + Playwright process on a separate VPS / local host.
+- **worker.apis.aicountly.com/** — Playwright worker in the [apis-aicountly](https://github.com/aicountly/apis-aicountly) repo (`/home/apisaicountly/public_html/worker.apis.aicountly.com`).
 
 Sessions execute strictly one at a time. The worker uses `SELECT … FOR UPDATE SKIP LOCKED` so even multiple workers (not used in MVP) never race on the same row.
 
@@ -107,19 +107,25 @@ npm run dev
 # Open http://localhost:5173 — sign in with the seeded owner.
 ```
 
-### 4. Worker host (separate Node host)
+### 4. Worker host (worker.apis.aicountly.com)
+
+Clone the **apis-aicountly** repo and use the folder that matches the cPanel subdomain path:
 
 ```bash
-cd worker
+git clone https://github.com/aicountly/apis-aicountly.git
+cd apis-aicountly/worker.apis.aicountly.com
 cp .env.example .env
-# QA_API_URL=https://qa.aicountly.org/api  (or http://localhost:8080 for dev)
-# QA_WORKER_TOKEN=<same value as server-php/.env>
-# QA_REPORTS_DIR=../qa-reports
-# QA_HEADLESS=1
+# QA_API_URL=https://qa.aicountly.org/api
+# QA_WORKER_TOKEN=<same value as server-php/.env on qa.aicountly.org>
+# QA_REPORTS_DIR=/home/apisaicountly/qa-reports
+# QA_WORKER_ID=worker.apis.aicountly.com
 npm install
-npm run playwright:install
+npx playwright install-deps chromium   # AlmaLinux: once as root
+npx playwright install chromium
 npm start
 ```
+
+See [apis-aicountly/worker.apis.aicountly.com/README.md](https://github.com/aicountly/apis-aicountly/blob/main/worker.apis.aicountly.com/README.md) for PM2 and production notes.
 
 The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` session, executes it end-to-end, then loops.
 
@@ -213,4 +219,4 @@ Other Books templates ship as JSON only; running them requires no additional cod
 - `.github/workflows/deploy-github-pages.yml` — preview frontend
 - `.github/workflows/deploy-prod-cpanel.yml` — frontend → `public_html/`, API → `public_html/api/`
 
-The worker host is independent and out of scope for these workflows — operators deploy it manually (e.g. `pm2 start` on a VPS).
+The worker host is independent — deploy from **apis-aicountly** (`worker.apis.aicountly.com/`) via SSH + PM2 on the apisaicountly server.
