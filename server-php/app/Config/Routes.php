@@ -36,6 +36,7 @@ $routes->get('/health', static function () {
 $routes->group('v1', static function ($routes) {
     // Public auth endpoints — no JWT.
     $routes->post('auth/login', 'Api\\V1\\AuthController::login');
+    $routes->post('auth/controller-sso', 'Api\\V1\\AuthController::controllerSso');
     $routes->post('auth/refresh', 'Api\\V1\\AuthController::refresh');
 
     // Worker endpoints — separate worker token (long-lived), not user JWT.

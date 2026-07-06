@@ -37,6 +37,16 @@ export function AuthProvider({ children }) {
     return data.data.user
   }, [])
 
+  const loginWithControllerSso = useCallback(async (ssoToken) => {
+    const { data } = await api.post(v1('/auth/controller-sso'), { token: ssoToken })
+    if (!data?.ok) throw new Error(data?.error || 'Controller SSO failed')
+    const token = data?.data?.token
+    if (!token) throw new Error('SSO succeeded but no token was returned')
+    setToken(token)
+    setUser(data.data.user)
+    return data.data.user
+  }, [])
+
   const logout = useCallback(async () => {
     try {
       await api.post(v1('/auth/logout'))
@@ -57,7 +67,7 @@ export function AuthProvider({ children }) {
   )
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, logout, refresh, hasRole }}>
+    <AuthCtx.Provider value={{ user, loading, login, loginWithControllerSso, logout, refresh, hasRole }}>
       {children}
     </AuthCtx.Provider>
   )

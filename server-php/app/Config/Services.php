@@ -6,6 +6,7 @@ use App\Libraries\Jwt;
 use App\Libraries\RunIdGenerator;
 use App\Libraries\Vault;
 use App\Services\AuditService;
+use App\Services\ConsoleIdentityService;
 use App\Services\ReportService;
 use App\Services\SessionPlannerService;
 use App\Services\WorkerStatusService;
@@ -67,5 +68,13 @@ class Services extends BaseService
             return static::getSharedInstance('workerStatus') ?? static::workerStatus(false);
         }
         return new WorkerStatusService();
+    }
+
+    public static function consoleIdentity(bool $getShared = true): ConsoleIdentityService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('consoleIdentity') ?? static::consoleIdentity(false);
+        }
+        return new ConsoleIdentityService();
     }
 }

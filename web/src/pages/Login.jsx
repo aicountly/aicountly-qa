@@ -1,9 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth.jsx'
 
+function readControllerSsoToken() {
+  const hash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  const params = new URLSearchParams(hash)
+  return params.get('controller_sso') || ''
+}
+
 export default function Login() {
-  const { login } = useAuth()
+  const { login, loginWithControllerSso } = useAuth()
   const nav = useNavigate()
   const loc = useLocation()
   const from = loc.state?.from || '/'
@@ -11,7 +19,28 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [ssoPending, setSsoPending] = useState(false)
   const [err, setErr] = useState('')
+
+  useEffect(() => {
+    const ssoToken = readControllerSsoToken()
+    if (!ssoToken) return
+
+    setSsoPending(true)
+    setErr('')
+
+    loginWithControllerSso(ssoToken)
+      .then(() => {
+        window.history.replaceState(null, '', '/login')
+        nav(from, { replace: true })
+      })
+      .catch((e) => {
+        setErr(e?.response?.data?.error || e.message || 'Console SSO login failed')
+      })
+      .finally(() => {
+        setSsoPending(false)
+      })
+  }, [from, loginWithControllerSso, nav])
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -27,6 +56,14 @@ export default function Login() {
     }
   }
 
+  if (ssoPending) {
+    return (
+      <div className="grid h-screen w-screen place-items-center bg-gradient-to-br from-white to-aicountly-50 px-4">
+        <div className="text-sm text-neutral-600">Signing you in from Console…</div>
+      </div>
+    )
+  }
+
   return (
     <div className="grid h-screen w-screen place-items-center bg-gradient-to-br from-white to-aicountly-50 px-4">
       <div className="w-full max-w-sm">
@@ -34,14 +71,15 @@ export default function Login() {
           <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-aicountly-600 text-sm font-bold text-white">QA</span>
           <div>
             <div className="text-base font-semibold text-neutral-900">AICOUNTLY QA Portal</div>
-            <div className="text-xs text-neutral-500">qa.aicountly.org · independent auth</div>
+            <div className="text-xs text-neutral-500">qa.aicountly.org · Console SSO enabled</div>
           </div>
         </div>
 
         <form onSubmit={onSubmit} className="qa-card">
           <h1 className="text-lg font-semibold text-neutral-900">Sign in</h1>
           <p className="mt-1 text-xs text-neutral-500">
-            This portal does <strong>not</strong> use my.aicountly.com login.
+            Open from <strong>Console → Top Controller Apps → QA</strong> for automatic sign-in,
+            or use your QA credentials below.
           </p>
 
           <div className="mt-4">
