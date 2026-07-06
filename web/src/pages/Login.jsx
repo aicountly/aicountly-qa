@@ -2,16 +2,10 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth.jsx'
 
-function readControllerSsoToken() {
-  const hash = window.location.hash.startsWith('#')
-    ? window.location.hash.slice(1)
-    : window.location.hash
-  const params = new URLSearchParams(hash)
-  return params.get('controller_sso') || ''
-}
+const SSO_ERROR_KEY = 'qa.sso_error'
 
 export default function Login() {
-  const { login, loginWithControllerSso } = useAuth()
+  const { user, login, ssoPending } = useAuth()
   const nav = useNavigate()
   const loc = useLocation()
   const from = loc.state?.from || '/'
@@ -19,28 +13,21 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [ssoPending, setSsoPending] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    const ssoToken = readControllerSsoToken()
-    if (!ssoToken) return
+    const stored = sessionStorage.getItem(SSO_ERROR_KEY)
+    if (stored) {
+      setErr(stored)
+      sessionStorage.removeItem(SSO_ERROR_KEY)
+    }
+  }, [])
 
-    setSsoPending(true)
-    setErr('')
-
-    loginWithControllerSso(ssoToken)
-      .then(() => {
-        window.history.replaceState(null, '', '/login')
-        nav(from, { replace: true })
-      })
-      .catch((e) => {
-        setErr(e?.response?.data?.error || e.message || 'Console SSO login failed')
-      })
-      .finally(() => {
-        setSsoPending(false)
-      })
-  }, [from, loginWithControllerSso, nav])
+  useEffect(() => {
+    if (user) {
+      nav(from, { replace: true })
+    }
+  }, [from, nav, user])
 
   async function onSubmit(e) {
     e.preventDefault()

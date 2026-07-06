@@ -40,13 +40,13 @@ function Authed({ children, roles }) {
 }
 
 export default function App() {
-  const { user, loading } = useAuth()
+  const { user, loading, ssoPending } = useAuth()
   const loc = useLocation()
 
-  if (loading) {
+  if (loading || ssoPending) {
     return (
       <div className="grid h-screen place-items-center text-sm text-neutral-500">
-        Loading QA Portal…
+        {ssoPending ? 'Signing you in from Console…' : 'Loading QA Portal…'}
       </div>
     )
   }

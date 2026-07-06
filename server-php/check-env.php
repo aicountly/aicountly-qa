@@ -43,10 +43,16 @@ $vars = [
 
 $jwtSecret = $read('QA_JWT_SECRET');
 $vaultKey  = $read('QA_VAULT_KEY');
+$consoleApi = $read('CONSOLE_API_URL');
+$appCode    = $read('CONTROLLER_APP_CODE', 'qa');
 
 echo "\n--- Auth secrets (from .env) ---\n";
 echo 'QA_JWT_SECRET=' . ($jwtSecret === '' ? '(EMPTY — login returns 503)' : '*** (' . strlen($jwtSecret) . ' chars' . (strlen($jwtSecret) < 32 ? ', TOO SHORT' : '') . ')') . "\n";
 echo 'QA_VAULT_KEY=' . ($vaultKey === '' ? '(EMPTY)' : '*** (' . strlen($vaultKey) . ' chars)') . "\n";
+
+echo "\n--- Console SSO (from .env) ---\n";
+echo 'CONSOLE_API_URL=' . ($consoleApi === '' ? '(EMPTY — controller SSO will fail)' : $consoleApi) . "\n";
+echo 'CONTROLLER_APP_CODE=' . ($appCode === '' ? '(EMPTY — use qa)' : $appCode) . "\n";
 
 echo "\n--- QA_DB_* (from .env) ---\n";
 foreach ($vars as $key => $val) {
@@ -94,6 +100,12 @@ try {
     if ($jwtSecret === '' || strlen($jwtSecret) < 32) {
         fwrite(STDERR, "WARNING: QA_JWT_SECRET missing or < 32 chars — auth/login will fail.\n");
         fwrite(STDERR, "Add to api/.env: QA_JWT_SECRET=" . bin2hex(random_bytes(32)) . "\n");
+        exit(1);
+    }
+
+    if ($consoleApi === '') {
+        fwrite(STDERR, "WARNING: CONSOLE_API_URL missing — Console SSO auto-login will fail.\n");
+        fwrite(STDERR, "Add to api/.env: CONSOLE_API_URL=https://console.aicountly.org/api\n");
         exit(1);
     }
 

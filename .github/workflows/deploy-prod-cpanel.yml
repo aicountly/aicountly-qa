@@ -168,6 +168,8 @@ jobs:
           fi
           echo "Server .env present — checking QA_DB_* (values masked):"
           "${SSH_CMD[@]}" "grep '^QA_DB_' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || true"
+          echo "Console SSO keys (values masked):"
+          "${SSH_CMD[@]}" "grep -E '^(CONSOLE_API_URL|CONTROLLER_APP_CODE)=' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || echo 'MISSING — add CONSOLE_API_URL and CONTROLLER_APP_CODE for SSO'"
           if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php check-env.php"; then
             echo "::error::api/.env on the server is missing or has empty QA_DB_* keys, or PostgreSQL is unreachable."
             echo "Edit ${REMOTE_ROOT}/api/.env on the server (not GitHub Secrets)."
