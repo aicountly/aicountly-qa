@@ -1,10 +1,10 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import Sidebar from './components/Sidebar.jsx'
 import Topbar from './components/Topbar.jsx'
 import RoleGuard from './components/RoleGuard.jsx'
 import { useAuth } from './lib/auth.jsx'
 
-import Login from './pages/Login.jsx'
+import ControllerGate from './pages/ControllerGate.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import TargetProfiles from './pages/TargetProfiles.jsx'
 import TargetProfileForm from './pages/TargetProfileForm.jsx'
@@ -41,7 +41,6 @@ function Authed({ children, roles }) {
 
 export default function App() {
   const { user, loading, ssoPending } = useAuth()
-  const loc = useLocation()
 
   if (loading || ssoPending) {
     return (
@@ -51,9 +50,13 @@ export default function App() {
     )
   }
 
+  if (!user) {
+    return <ControllerGate />
+  }
+
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to={loc.state?.from || '/'} replace /> : <Login />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
 
       <Route path="/"                 element={<Authed><Dashboard /></Authed>} />
       <Route path="/target-profiles"  element={<Authed><TargetProfiles /></Authed>} />

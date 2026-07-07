@@ -5,6 +5,7 @@ const baseURL = (import.meta.env.VITE_API_URL || '/api').replace(/\/v1\/?$/, '')
 export const api = axios.create({
   baseURL,
   timeout: 30_000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -37,10 +38,9 @@ api.interceptors.response.use(
     if (err.response?.status === 401) {
       const hadToken = getToken()
       setToken('')
-      const onLogin = window.location.pathname.endsWith('/login')
-      // Only hard-redirect when a session existed (expired token), not for anonymous /me probes
-      if (hadToken && !onLogin) {
-        window.location.assign('/login')
+      // App-level ControllerGate handles unauthenticated state; avoid hard redirects.
+      if (hadToken) {
+        window.location.assign('/')
       }
     }
     return Promise.reject(err)
