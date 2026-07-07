@@ -20,15 +20,21 @@ $routes->get('/health', static function () {
     $jwtOk     = $jwtSecret !== '' && strlen($jwtSecret) >= 32;
     $vaultKey  = (string) env('QA_VAULT_KEY', '');
     $vaultOk   = $vaultKey !== '' && strlen($vaultKey) >= 32;
+    $consoleOk = trim((string) env('CONSOLE_API_URL', '')) !== '';
 
     return service('response')->setJSON([
-        'ok'        => $jwtOk,
+        'ok'        => $jwtOk && $consoleOk,
         'service'   => 'aicountly-qa-api',
-        'status'    => $jwtOk ? 'ready' : 'misconfigured',
+        'status'    => ($jwtOk && $consoleOk) ? 'ready' : 'misconfigured',
         'timestamp' => gmdate('c'),
+        'sso'       => [
+            'console_identity' => 'sso-callback-v2',
+            'routes'           => ['sso-callback', 'controller-sso', 'console-session'],
+        ],
         'checks'    => [
-            'jwt_secret' => $jwtOk ? 'ok' : 'missing or too short (need 32+ chars in api/.env)',
-            'vault_key'  => $vaultOk ? 'ok' : 'missing or too short',
+            'jwt_secret'      => $jwtOk ? 'ok' : 'missing or too short (need 32+ chars in api/.env)',
+            'vault_key'       => $vaultOk ? 'ok' : 'missing or too short',
+            'console_api_url' => $consoleOk ? 'ok' : 'missing CONSOLE_API_URL in api/.env',
         ],
     ]);
 });
@@ -36,6 +42,7 @@ $routes->get('/health', static function () {
 $routes->group('v1', static function ($routes) {
     // Public auth endpoints — no JWT.
     $routes->post('auth/login', 'Api\\V1\\AuthController::login');
+    $routes->get('auth/sso-callback', 'Api\\V1\\AuthController::ssoCallback');
     $routes->post('auth/controller-sso', 'Api\\V1\\AuthController::controllerSso');
     $routes->post('auth/console-session', 'Api\\V1\\AuthController::consoleSession');
     $routes->post('auth/refresh', 'Api\\V1\\AuthController::refresh');

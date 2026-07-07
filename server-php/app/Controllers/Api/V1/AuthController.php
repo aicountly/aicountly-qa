@@ -12,6 +12,8 @@ use Throwable;
 
 class AuthController extends BaseApiController
 {
+    private const QA_TOKEN_STORAGE_KEY = 'qa.token';
+
     public function login()
     {
         return $this->fail(
@@ -59,6 +61,50 @@ class AuthController extends BaseApiController
     }
 
     /**
+     * GET /v1/auth/sso-callback?token= — browser redirect from Console (no SPA JS required).
+     */
+    public function ssoCallback()
+    {
+        try {
+            if ($fail = $this->ensureJwtConfigured()) {
+                return $this->ssoCallbackHtml('QA Portal is not configured for Console SSO yet.', 503);
+            }
+
+            $token = trim((string) ($this->request->getGet('token') ?? ''));
+            if ($token === '') {
+                return $this->ssoCallbackHtml('Missing SSO token. Open QA again from Console Top Controller Apps.', 400);
+            }
+
+            $identity = Services::consoleIdentity()->exchangeLaunchToken($token);
+            if ($identity === null) {
+                return $this->ssoCallbackHtml(
+                    'This sign-in link expired. Go back to Console and click QA again.',
+                    401,
+                );
+            }
+
+            $session = $this->buildSessionFromConsoleIdentity($identity, 'controller_sso_callback');
+            if ($session instanceof ResponseInterface) {
+                $message = 'You do not have access to the QA controller app.';
+                if (method_exists($session, 'getJSON')) {
+                    $json = $session->getJSON(true);
+                    if (is_array($json) && ! empty($json['error'])) {
+                        $message = (string) $json['error'];
+                    }
+                }
+
+                return $this->ssoCallbackHtml($message, 403);
+            }
+
+            return $this->completeSsoInBrowser((string) $session['token']);
+        } catch (Throwable $e) {
+            log_message('error', 'SSO callback failed: ' . $e->getMessage());
+
+            return $this->ssoCallbackHtml('Console SSO sign-in failed. Try again from Console.', 500);
+        }
+    }
+
+    /**
      * Exchange a Console controller SSO launch token for a QA session.
      */
     public function controllerSso()
@@ -79,7 +125,12 @@ class AuthController extends BaseApiController
                 return $this->fail('Invalid or expired Console SSO token.', 401);
             }
 
-            return $this->issueSessionFromConsoleIdentity($identity, 'controller_sso_login');
+            $session = $this->buildSessionFromConsoleIdentity($identity, 'controller_sso_login');
+            if ($session instanceof ResponseInterface) {
+                return $session;
+            }
+
+            return $this->ok($session);
         } catch (Throwable $e) {
             log_message('error', 'Controller SSO failed: ' . $e->getMessage());
 
@@ -107,7 +158,12 @@ class AuthController extends BaseApiController
                 return $this->fail('Console session is invalid or expired. Sign in again at Console.', 401);
             }
 
-            return $this->issueSessionFromConsoleIdentity($identity, 'console_session_login');
+            $session = $this->buildSessionFromConsoleIdentity($identity, 'console_session_login');
+            if ($session instanceof ResponseInterface) {
+                return $session;
+            }
+
+            return $this->ok($session);
         } catch (Throwable $e) {
             log_message('error', 'Console session login failed: ' . $e->getMessage());
 
@@ -117,8 +173,9 @@ class AuthController extends BaseApiController
 
     /**
      * @param array<string,mixed> $identity
+     * @return array<string,mixed>|ResponseInterface
      */
-    private function issueSessionFromConsoleIdentity(array $identity, string $auditEvent): ResponseInterface
+    private function buildSessionFromConsoleIdentity(array $identity, string $auditEvent): array|ResponseInterface
     {
         $active = (bool) ($identity['active'] ?? false);
         $global = (bool) ($identity['global_superadmin'] ?? false);
@@ -182,7 +239,7 @@ class AuthController extends BaseApiController
             ],
         ]);
 
-        return $this->ok([
+        return [
             'token'   => $qaToken,
             'expires' => (int) env('QA_JWT_TTL_MINUTES', 720) * 60,
             'user'    => [
@@ -191,7 +248,73 @@ class AuthController extends BaseApiController
                 'name'  => $user['name'],
                 'roles' => $roles,
             ],
-        ]);
+        ];
+    }
+
+    private function completeSsoInBrowser(string $qaToken): ResponseInterface
+    {
+        $tokenJson = json_encode($qaToken, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+        $storageKey = json_encode(self::QA_TOKEN_STORAGE_KEY, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+        $html = <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signing in to QA Portal…</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; color: #334155; }
+  </style>
+</head>
+<body>
+  <p>Signing you in to QA Portal…</p>
+  <script>
+    try {
+      localStorage.setItem({$storageKey}, {$tokenJson});
+    } catch (e) {}
+    location.replace('/');
+  </script>
+</body>
+</html>
+HTML;
+
+        return $this->response
+            ->setStatusCode(200)
+            ->setContentType('text/html')
+            ->setBody($html);
+    }
+
+    private function ssoCallbackHtml(string $message, int $status = 400): ResponseInterface
+    {
+        $safeMessage = htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $consoleUrl  = 'https://console.aicountly.org';
+        $html = <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QA sign-in failed</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 48px auto; padding: 0 16px; color: #334155; }
+    .box { border: 1px solid #fecaca; background: #fef2f2; border-radius: 12px; padding: 16px; }
+    a { color: #047857; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1 style="font-size:18px;margin:0 0 8px;">QA sign-in failed</h1>
+    <p style="margin:0 0 12px;">{$safeMessage}</p>
+    <p style="margin:0;"><a href="{$consoleUrl}">Return to Console</a></p>
+  </div>
+</body>
+</html>
+HTML;
+
+        return $this->response
+            ->setStatusCode($status)
+            ->setContentType('text/html')
+            ->setBody($html);
     }
 
     private function ensureJwtConfigured(): ?ResponseInterface
