@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { api, getToken, setToken, v1 } from './api'
 import { clearControllerSsoHash, readControllerSsoToken } from './controllerSso'
+import { redirectToConsoleLogin } from './consoleAuth.js'
 
 const AuthCtx = createContext(null)
 
@@ -124,8 +125,7 @@ export function AuthProvider({ children }) {
     }
     setToken('')
     setUser(null)
-    setGateReason(GATE_CONSOLE_REQUIRED)
-    setGateMessage('Signed out of QA Portal.')
+    redirectToConsoleLogin()
   }, [])
 
   const hasRole = useCallback(
