@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth.jsx'
+import AppLauncher from './AppLauncher.jsx'
 
 const titles = {
   '/': 'Dashboard',
@@ -26,9 +27,12 @@ export default function Topbar() {
         <h1 className="text-sm font-semibold text-neutral-900">{title}</h1>
         <p className="text-xs text-neutral-500">Internal QA Testing Agent — testing &amp; reporting only</p>
       </div>
-      <div className="hidden text-right text-xs text-neutral-500 sm:block">
+      <div className="flex items-center gap-3">
+        <AppLauncher />
+        <div className="hidden text-right text-xs text-neutral-500 sm:block">
         {user?.email}
         <div className="text-aicountly-700 font-medium">{(user?.roles || []).join(' · ')}</div>
+        </div>
       </div>
     </header>
   )

@@ -62,6 +62,8 @@ $routes->group('v1', static function ($routes) {
     $routes->group('', ['filter' => 'jwt'], static function ($routes) {
         $routes->get('me', 'Api\\V1\\AuthController::me');
         $routes->post('auth/logout', 'Api\\V1\\AuthController::logout');
+        $routes->get('auth/controller-apps/launcher', 'Api\\V1\\AuthController::controllerAppsLauncher');
+        $routes->get('auth/sso/launch-url', 'Api\\V1\\AuthController::ssoLaunchUrl');
 
         $routes->resource('users', ['controller' => 'Api\\V1\\UsersController']);
         $routes->resource('roles', ['controller' => 'Api\\V1\\RolesController']);
