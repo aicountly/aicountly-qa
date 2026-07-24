@@ -223,10 +223,11 @@ class AuthController extends BaseApiController
     private function buildSessionFromConsoleIdentity(array $identity, string $auditEvent): array|ResponseInterface
     {
         $active = (bool) ($identity['active'] ?? false);
-        $global = (bool) ($identity['global_superadmin'] ?? false);
-        if (! $active && ! $global) {
+        if (! $active) {
             return $this->fail('You do not have access to the QA controller app.', 403);
         }
+
+        $global = (bool) ($identity['global_superadmin'] ?? false);
 
         $consoleUser = is_array($identity['user'] ?? null) ? $identity['user'] : [];
         $email = strtolower(trim((string) ($consoleUser['email'] ?? '')));
