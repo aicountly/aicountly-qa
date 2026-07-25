@@ -58,24 +58,27 @@ export default function QaRunDetail() {
     refetchInterval: (q) => {
       const sessions = q.state.data?.sessions || []
       const active = sessions.some((s) => ['queued', 'claimed', 'running'].includes(s.status))
-      return active ? 5000 : false
+        || ['pending', 'running'].includes(q.state.data?.status)
+      return active ? 3000 : false
     },
   })
 
   const workerStatus = useQuery({
     queryKey: ['worker-status'],
     queryFn: async () => (await api.get(v1('/dashboard/worker-status'))).data?.data,
-    refetchInterval: 15000,
+    refetchInterval: 10000,
   })
 
   const validations = useQuery({
     queryKey: ['validation', id],
     queryFn: async () => (await api.get(v1(`/validation-results?qa_run_id=${id}`))).data?.data ?? [],
+    refetchInterval: () => (run.data?.status === 'running' ? 3000 : false),
   })
 
   const reports = useQuery({
     queryKey: ['reports', id],
     queryFn: async () => (await api.get(v1(`/reports/${id}`))).data?.data ?? [],
+    refetchInterval: () => (run.data?.status === 'running' ? 3000 : false),
   })
 
   const openReport = useMutation({
@@ -179,15 +182,20 @@ export default function QaRunDetail() {
             {queuedCount} session{queuedCount === 1 ? '' : 's'} queued. The QA worker is online and will claim the next session shortly.
           </p>
         )}
+        {r.status === 'running' && activeCount > 0 && workerOnline && (
+          <p className="mt-3 text-sm text-neutral-600">
+            Status updates automatically every few seconds. Sessions with no worker progress for 15 minutes are marked failed.
+          </p>
+        )}
         {activeCount > 0 && !workerOnline && (
-          <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
-            <p className="font-medium">QA worker is not running</p>
-            <p className="mt-1 text-red-800">
-              Sessions stay in <span className="font-mono text-xs">queued</span> until the Playwright worker on{' '}
-              <span className="font-mono text-xs">worker.apis.aicountly.com</span> polls the API.
+          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+            <p className="font-medium">Note: QA worker is offline</p>
+            <p className="mt-1 text-slate-700">
+              Sessions stay queued until the Playwright worker on{' '}
+              <span className="font-mono text-xs">worker.apis.aicountly.com</span> is running.
             </p>
             {workerStatus.data?.last_seen_at && (
-              <p className="mt-1 text-xs text-red-700">
+              <p className="mt-1 text-xs text-slate-600">
                 Last worker heartbeat: {fmtDate(workerStatus.data.last_seen_at)}
               </p>
             )}

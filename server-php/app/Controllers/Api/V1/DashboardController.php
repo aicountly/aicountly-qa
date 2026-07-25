@@ -20,6 +20,9 @@ class DashboardController extends BaseApiController
         $errors   = new ErrorRegisterModel();
         $reports  = new ReportsModel();
 
+        // Close out orphaned running sessions so dashboard cards match reality.
+        $sessions->recoverStaleSessions();
+
         $totalRuns    = $runs->countAllResults();
         $passed       = $results->where('status', 'passed')->countAllResults(false);
         $results->resetQuery();

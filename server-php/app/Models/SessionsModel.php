@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use CodeIgniter\Model;
+use Config\Services;
 
 class SessionsModel extends Model
 {
@@ -103,7 +104,7 @@ class SessionsModel extends Model
      */
     public function claimNext(string $workerId): ?array
     {
-        $this->requeueStaleClaims(10);
+        $this->recoverStaleSessions();
 
         $db = $this->db;
         $db->transStart();
@@ -142,9 +143,92 @@ class SessionsModel extends Model
         return $row;
     }
 
+    /**
+     * Recover sessions abandoned after a worker crash / restart.
+     * - claimed too long → re-queue
+     * - running with stale heartbeat → mark failed + close the run when nothing remains
+     *
+     * @return list<string> QA run IDs that had stale running sessions failed
+     */
+    public function recoverStaleSessions(int $claimedMinutes = 10, int $runningMinutes = 15): array
+    {
+        $claimedMinutes  = max(1, $claimedMinutes);
+        $runningMinutes  = max(1, $runningMinutes);
+
+        $this->requeueStaleClaims($claimedMinutes);
+
+        $result = $this->db->query(
+            "UPDATE qa_sessions
+             SET status = 'failed',
+                 completed_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE status = 'running'
+             AND COALESCE(last_heartbeat_at, started_at, updated_at, created_at)
+                 < (CURRENT_TIMESTAMP - INTERVAL '{$runningMinutes} minutes')
+             RETURNING id, qa_run_id, started_at"
+        );
+
+        $failedRows = $result ? $result->getResultArray() : [];
+        if ($failedRows === []) {
+            return [];
+        }
+
+        $resultsModel = new SessionResultsModel();
+        $runIds       = [];
+
+        foreach ($failedRows as $row) {
+            $sessionId = (int) $row['id'];
+            $qaRunId   = (string) $row['qa_run_id'];
+            $runIds[]  = $qaRunId;
+
+            $existing = $resultsModel->where('session_id', $sessionId)->first();
+            if ($existing) {
+                continue;
+            }
+
+            $resultsModel->insert([
+                'session_id'       => $sessionId,
+                'qa_run_id'        => $qaRunId,
+                'status'           => 'failed',
+                'severity'         => 'high',
+                'passed_count'     => 0,
+                'failed_count'     => 1,
+                'warning_count'    => 0,
+                'result_json'      => [
+                    'fatal_error' => 'Session timed out: the QA worker stopped reporting progress. The session was marked failed automatically.',
+                ],
+                'screenshot_paths' => [],
+                'console_errors'   => [],
+                'network_errors'   => [],
+                'suggested_area'   => 'QA worker / infrastructure',
+                'suggested_prompt' => 'Check that the Playwright worker is running and can complete sessions without crashing.',
+                'started_at'       => $row['started_at'] ?? null,
+                'completed_at'     => date('Y-m-d H:i:s'),
+                'created_at'       => date('Y-m-d H:i:s'),
+            ]);
+        }
+
+        $runIds = array_values(array_unique($runIds));
+
+        foreach ($runIds as $qaRunId) {
+            $remaining = (int) $this->db->table('qa_sessions')
+                ->where('qa_run_id', $qaRunId)
+                ->whereIn('status', ['queued', 'claimed', 'running'])
+                ->countAllResults();
+
+            if ($remaining === 0) {
+                Services::reportService()->buildFinalReport($qaRunId);
+            }
+        }
+
+        return $runIds;
+    }
+
     /** Re-queue sessions left in claimed state after a worker crash. */
     public function requeueStaleClaims(int $minutes = 10): void
     {
+        $minutes = max(1, $minutes);
+
         $this->db->query(
             "UPDATE qa_sessions
              SET status = 'queued',

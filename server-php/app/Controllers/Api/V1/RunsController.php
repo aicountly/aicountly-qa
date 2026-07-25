@@ -17,6 +17,7 @@ class RunsController extends ResourceController
 
     public function index()
     {
+        (new SessionsModel())->recoverStaleSessions();
         $this->promotePendingRuns();
 
         $q = $this->request->getGet();
@@ -32,6 +33,7 @@ class RunsController extends ResourceController
 
     public function show($id = null)
     {
+        (new SessionsModel())->recoverStaleSessions();
         $this->promotePendingRuns();
 
         $row = $this->model->find($id);

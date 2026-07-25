@@ -20,6 +20,11 @@ export default function QaRuns() {
   const { data, isLoading } = useQuery({
     queryKey: ['runs', params],
     queryFn: async () => (await api.get(v1(`/runs?${params}`))).data?.data ?? [],
+    refetchInterval: (q) => {
+      const rows = q.state.data || []
+      const active = rows.some((r) => ['pending', 'running'].includes(r.status))
+      return active ? 5000 : false
+    },
   })
 
   const remove = useMutation({
