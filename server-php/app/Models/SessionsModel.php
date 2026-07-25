@@ -245,7 +245,8 @@ class SessionsModel extends Model
     public const RERUNNABLE = ['completed', 'failed', 'skipped', 'partial', 'blocked_by_safe_guard'];
 
     /**
-     * Reset a finished session to queued and clear prior result artifacts.
+     * Reset a finished session to queued and clear prior DB result artifacts.
+     * Screenshots/evidence files on disk are intentionally kept until the QA run is deleted.
      *
      * @return array{session: array, previous_status: string}
      */

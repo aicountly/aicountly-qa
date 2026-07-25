@@ -117,7 +117,9 @@ export default function QaRunDetail() {
   })
 
   function handleDelete() {
-    if (!window.confirm(`Delete QA run "${id}"? This removes its sessions and plans.`)) {
+    if (!window.confirm(
+      `Delete QA run "${id}"?\n\nThis permanently removes sessions, plans, live logs, and all screenshots/report files from disk.`,
+    )) {
       return
     }
     remove.mutate()

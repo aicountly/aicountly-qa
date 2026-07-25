@@ -300,6 +300,101 @@ class ReportService
         return rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $dir), '/\\');
     }
 
+    /**
+     * Locate on-disk folder for a QA run (product/date/qa_run_id), with fallbacks
+     * when product casing/path differs from the DB value.
+     */
+    public function findRunDirectory(string $qaRunId, ?string $productName = null): ?string
+    {
+        $qaRunId = trim($qaRunId);
+        if ($qaRunId === '') {
+            return null;
+        }
+
+        $root = $this->reportsRoot();
+        $day  = substr($qaRunId, 7, 8);
+        $date = $day !== '' && ctype_digit($day)
+            ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2)
+            : null;
+
+        $candidates = [];
+        if ($productName && $date) {
+            $candidates[] = $root . '/' . $productName . '/' . $date . '/' . $qaRunId;
+        }
+        if ($date) {
+            foreach (glob($root . '/*/' . $date . '/' . $qaRunId) ?: [] as $path) {
+                $candidates[] = $path;
+            }
+        }
+        foreach (glob($root . '/*/*/' . $qaRunId) ?: [] as $path) {
+            $candidates[] = $path;
+        }
+
+        foreach ($candidates as $path) {
+            if (is_dir($path)) {
+                return rtrim(str_replace('\\', '/', $path), '/');
+            }
+        }
+
+        return null;
+    }
+
+    /** Worker upload folder: …/session-NNN/screenshots */
+    public function sessionScreenshotsDirectory(array $session, ?array $run = null): string
+    {
+        $run ??= (new RunsModel())->find($session['qa_run_id'] ?? '') ?: [];
+        $product = $run['product_name'] ?? 'unknown';
+        $qaRunId = (string) ($session['qa_run_id'] ?? '');
+        $day     = substr($qaRunId, 7, 8);
+        $date    = $day !== '' && ctype_digit($day)
+            ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2)
+            : gmdate('Y-m-d');
+        $order   = str_pad((string) ($session['order_index'] ?? $session['id'] ?? 0), 3, '0', STR_PAD_LEFT);
+
+        $existing = $this->findRunDirectory($qaRunId, $product);
+        $base     = $existing ?: ($this->reportsRoot() . '/' . $product . '/' . $date . '/' . $qaRunId);
+
+        return $base . '/session-' . $order . '/screenshots';
+    }
+
+    /** Recursively delete the run folder (screenshots, reports, logs) from disk. */
+    public function deleteRunArtifacts(string $qaRunId, ?string $productName = null): bool
+    {
+        $dir = $this->findRunDirectory($qaRunId, $productName);
+        if ($dir === null || ! is_dir($dir)) {
+            return false;
+        }
+        $this->deleteTree($dir);
+
+        return ! is_dir($dir);
+    }
+
+    private function deleteTree(string $path): void
+    {
+        if (is_file($path)) {
+            @unlink($path);
+
+            return;
+        }
+        if (! is_dir($path)) {
+            return;
+        }
+
+        $items = scandir($path) ?: [];
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $full = $path . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($full)) {
+                $this->deleteTree($full);
+            } else {
+                @unlink($full);
+            }
+        }
+        @rmdir($path);
+    }
+
     private function renderSessionHtml(array $json): string
     {
         $session   = $json['session'];

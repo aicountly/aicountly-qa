@@ -39,7 +39,8 @@ class SessionsController extends ResourceController
 
     /**
      * Re-queue a finished session so the worker can run it again.
-     * Clears prior results, validations, live-log events, session reports, and evidence files.
+     * Clears DB results/validations/live-log events for a fresh attempt, but keeps
+     * screenshots on disk until the whole QA run is deleted.
      */
     public function rerun($id = null)
     {
@@ -59,7 +60,6 @@ class SessionsController extends ResourceController
         }
 
         $session = $prepared['session'];
-        $this->clearSessionEvidenceFiles($session);
 
         Services::auditService()->log('session_rerun', [
             'qa_run_id'    => $session['qa_run_id'],
@@ -77,7 +77,8 @@ class SessionsController extends ResourceController
                 $sessionId,
                 (string) $session['qa_run_id'],
                 'rerun',
-                'Session re-queued for another run (was ' . $prepared['previous_status'] . ').',
+                'Session re-queued for another run (was ' . $prepared['previous_status']
+                    . '). Previous screenshots are kept until the QA run is deleted.',
                 ['metadata' => ['previous_status' => $prepared['previous_status']]]
             );
         } catch (\Throwable $e) {
@@ -117,7 +118,7 @@ class SessionsController extends ResourceController
             $events = $this->synthesizeEventsFromAudit($sessionId, (string) $session['qa_run_id'], $session);
         }
 
-        $screenshots = $this->listScreenshots($session);
+        $screenshots = $this->listScreenshots($session, $events);
         $result      = (new SessionResultsModel())->where('session_id', $sessionId)->first();
         $outcome     = $this->buildOutcome($session, $result, $events);
 
@@ -249,27 +250,27 @@ class SessionsController extends ResourceController
         };
     }
 
-    /** @return list<array{filename: string, kind: string, url: string, created_at: string|null}> */
-    private function listScreenshots(array $session): array
+    /**
+     * @param list<array<string, mixed>> $events
+     * @return list<array{filename: string, kind: string, url: string, created_at: string|null}>
+     */
+    private function listScreenshots(array $session, array $events = []): array
     {
-        $dirs = $this->evidenceDirs($session);
         $out  = [];
         $seen = [];
 
-        foreach ($dirs as $dir) {
-            foreach ($this->listImageFilesRecursive($dir) as $file) {
-                $name = basename($file);
-                if (isset($seen[$name])) {
-                    continue;
-                }
-                $seen[$name] = true;
-                $out[] = [
-                    'filename'   => $name,
-                    'kind'       => 'screenshot',
-                    'url'        => '/v1/sessions/' . (int) $session['id'] . '/evidence?filename=' . rawurlencode($name),
-                    'created_at' => date('Y-m-d H:i:s', (int) filemtime($file)),
-                ];
+        foreach ($this->collectSessionImageFiles($session, $events) as $file) {
+            $name = basename($file);
+            if (isset($seen[$name])) {
+                continue;
             }
+            $seen[$name] = true;
+            $out[] = [
+                'filename'   => $name,
+                'kind'       => 'screenshot',
+                'url'        => '/v1/sessions/' . (int) $session['id'] . '/evidence?filename=' . rawurlencode($name),
+                'created_at' => date('Y-m-d H:i:s', (int) @filemtime($file)),
+            ];
         }
 
         usort($out, static fn ($a, $b) => strcmp((string) $a['created_at'], (string) $b['created_at']));
@@ -277,10 +278,49 @@ class SessionsController extends ResourceController
         return $out;
     }
 
+    /**
+     * Gather screenshot files from the run folder and from evidence event metadata paths.
+     *
+     * @param list<array<string, mixed>> $events
+     * @return list<string>
+     */
+    private function collectSessionImageFiles(array $session, array $events = []): array
+    {
+        $files = [];
+        foreach ($this->evidenceDirs($session) as $dir) {
+            foreach ($this->listImageFilesRecursive($dir) as $file) {
+                $files[] = $file;
+            }
+        }
+
+        // Fallback: resolve absolute paths recorded when the worker uploaded evidence.
+        foreach ($events as $ev) {
+            if (($ev['event_type'] ?? '') !== 'evidence') {
+                continue;
+            }
+            $meta = $ev['metadata'] ?? [];
+            if (is_string($meta)) {
+                $meta = json_decode($meta, true) ?: [];
+            }
+            if (! is_array($meta)) {
+                continue;
+            }
+            $path = (string) ($meta['path'] ?? '');
+            if ($path !== '' && is_file($path) && $this->isImagePath($path)) {
+                $files[] = $path;
+            }
+        }
+
+        return array_values(array_unique($files));
+    }
+
     /** @return list<string> absolute image file paths */
     private function listImageFilesRecursive(string $dir): array
     {
         $files = [];
+        if (! is_dir($dir)) {
+            return $files;
+        }
         $items = glob(rtrim($dir, '/\\') . '/*') ?: [];
         foreach ($items as $item) {
             if (is_dir($item)) {
@@ -289,11 +329,7 @@ class SessionsController extends ResourceController
                 }
                 continue;
             }
-            if (! is_file($item)) {
-                continue;
-            }
-            $ext = strtolower(pathinfo($item, PATHINFO_EXTENSION));
-            if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true)) {
+            if (is_file($item) && $this->isImagePath($item)) {
                 $files[] = $item;
             }
         }
@@ -301,73 +337,27 @@ class SessionsController extends ResourceController
         return $files;
     }
 
-    /** Delete prior screenshots/reports under session-* folders for a clean re-run. */
-    private function clearSessionEvidenceFiles(array $session): void
+    private function isImagePath(string $path): bool
     {
-        foreach ($this->evidenceDirs($session) as $dir) {
-            $this->deleteTree($dir);
-        }
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
 
-        // Also remove final report files at run root if present.
-        $run = (new RunsModel())->find($session['qa_run_id'] ?? '');
-        if (! $run) {
-            return;
-        }
-        $product = $run['product_name'] ?? 'unknown';
-        $day     = substr((string) $session['qa_run_id'], 7, 8);
-        $date    = $day !== ''
-            ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2)
-            : gmdate('Y-m-d');
-        $base = Services::reportService()->reportsRoot()
-            . '/' . $product . '/' . $date . '/' . $session['qa_run_id'];
-        foreach (['report.html', 'report.json', 'final-report.html', 'final-report.json'] as $name) {
-            $path = $base . '/' . $name;
-            if (is_file($path)) {
-                @unlink($path);
-            }
-        }
-    }
-
-    private function deleteTree(string $path): void
-    {
-        if (! is_dir($path)) {
-            if (is_file($path)) {
-                @unlink($path);
-            }
-
-            return;
-        }
-
-        $items = scandir($path) ?: [];
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $full = $path . DIRECTORY_SEPARATOR . $item;
-            if (is_dir($full)) {
-                $this->deleteTree($full);
-            } else {
-                @unlink($full);
-            }
-        }
-        @rmdir($path);
+        return in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true);
     }
 
     /** @return list<string> */
     private function evidenceDirs(array $session): array
     {
-        $run = (new RunsModel())->find($session['qa_run_id']);
-        $product = $run['product_name'] ?? 'unknown';
-        $day     = substr((string) $session['qa_run_id'], 7, 8);
-        $date    = $day !== ''
-            ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2)
-            : gmdate('Y-m-d');
+        $run  = (new RunsModel())->find($session['qa_run_id']);
+        $base = Services::reportService()->findRunDirectory(
+            (string) $session['qa_run_id'],
+            isset($run['product_name']) ? (string) $run['product_name'] : null
+        );
 
-        $base = Services::reportService()->reportsRoot()
-            . '/' . $product . '/' . $date . '/' . $session['qa_run_id'];
-
-        if (! is_dir($base)) {
-            return [];
+        if ($base === null || ! is_dir($base)) {
+            // Ensure upload path exists as a candidate even if empty.
+            $shotDir = Services::reportService()->sessionScreenshotsDirectory($session, $run ?: null);
+            $parent  = dirname($shotDir);
+            return is_dir($parent) ? [$parent] : (is_dir($shotDir) ? [$shotDir] : []);
         }
 
         $prefix = 'session-' . str_pad((string) ($session['order_index'] ?? $session['id']), 3, '0', STR_PAD_LEFT);
@@ -378,16 +368,34 @@ class SessionsController extends ResourceController
             }
         }
 
-        return $dirs;
+        // Also include the canonical screenshots folder used by worker uploads.
+        $shotDir = Services::reportService()->sessionScreenshotsDirectory($session, $run ?: null);
+        if (is_dir($shotDir)) {
+            $dirs[] = $shotDir;
+        }
+        $sessionDir = dirname($shotDir);
+        if (is_dir($sessionDir)) {
+            $dirs[] = $sessionDir;
+        }
+
+        return array_values(array_unique($dirs));
     }
 
     private function findEvidenceFile(array $session, string $filename): ?string
     {
-        foreach ($this->evidenceDirs($session) as $dir) {
-            foreach ($this->listImageFilesRecursive($dir) as $file) {
-                if (basename($file) === $filename) {
-                    return $file;
-                }
+        $events = [];
+        try {
+            $events = (new SessionEventsModel())
+                ->where('session_id', (int) $session['id'])
+                ->where('event_type', 'evidence')
+                ->findAll();
+        } catch (\Throwable $e) {
+            $events = [];
+        }
+
+        foreach ($this->collectSessionImageFiles($session, $events) as $file) {
+            if (basename($file) === $filename) {
+                return $file;
             }
         }
 

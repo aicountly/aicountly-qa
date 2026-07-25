@@ -357,14 +357,7 @@ class WorkerController extends BaseApiController
             return $this->fail('Session not found.', 404);
         }
         $run = (new RunsModel())->find($session['qa_run_id']);
-        $product = $run['product_name'] ?? 'unknown';
-        $day = substr($session['qa_run_id'], 7, 8);
-        $date = $day ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2) : gmdate('Y-m-d');
-        $reportsRoot = Services::reportService()->reportsRoot();
-        $dir = $reportsRoot
-            . "/{$product}/{$date}/{$session['qa_run_id']}/session-"
-            . str_pad((string) $session['order_index'], 3, '0', STR_PAD_LEFT)
-            . '/screenshots';
+        $dir = Services::reportService()->sessionScreenshotsDirectory($session, $run ?: null);
         if (! is_dir($dir) && ! @mkdir($dir, 0775, true) && ! is_dir($dir)) {
             return $this->fail('Cannot create evidence directory on API host. Check QA_REPORTS_DIR permissions.', 500);
         }

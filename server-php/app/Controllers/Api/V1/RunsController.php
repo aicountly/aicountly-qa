@@ -147,14 +147,21 @@ class RunsController extends ResourceController
             return $this->fail('Cannot delete a run while sessions are executing.', 409);
         }
 
+        // Wipe screenshots, session reports, and logs on disk before DB cascade.
+        $removed = Services::reportService()->deleteRunArtifacts(
+            (string) $id,
+            isset($row['product_name']) ? (string) $row['product_name'] : null
+        );
+
         $this->model->delete($id);
         Services::auditService()->log('qa_run_delete', [
             'qa_run_id'    => $id,
             'subject_kind' => 'qa_run',
             'subject_id'   => $id,
+            'metadata'     => ['disk_artifacts_removed' => $removed],
         ]);
 
-        return $this->respondDeleted(['ok' => true]);
+        return $this->respondDeleted(['ok' => true, 'disk_artifacts_removed' => $removed]);
     }
 
     /** Pending runs with queued sessions should display as running. */
