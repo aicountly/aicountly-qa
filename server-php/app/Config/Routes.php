@@ -82,6 +82,9 @@ $routes->group('v1', static function ($routes) {
 
         $routes->resource('runs', ['controller' => 'Api\\V1\\RunsController']);
         $routes->get('sessions/(:num)/live', 'Api\\V1\\SessionsController::live/$1');
+        // Prefer query ?filename=… — path URLs ending in .png are often intercepted by
+        // cPanel/nginx static-file rules before CodeIgniter runs.
+        $routes->get('sessions/(:num)/evidence', 'Api\\V1\\SessionsController::evidence/$1');
         $routes->get('sessions/(:num)/evidence/(:segment)', 'Api\\V1\\SessionsController::evidence/$1/$2');
         $routes->resource('sessions', ['controller' => 'Api\\V1\\SessionsController']);
 

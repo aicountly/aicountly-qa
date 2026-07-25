@@ -91,11 +91,12 @@ class SessionsController extends ResourceController
 
     /**
      * Serve an evidence file (screenshot) for a session. Filename only — no path traversal.
+     * Prefer ?filename=… (avoids cPanel static handlers on URLs ending in .png).
      */
     public function evidence($id = null, $filename = null)
     {
         $sessionId = (int) $id;
-        $filename  = basename((string) $filename);
+        $filename  = basename((string) ($filename ?: $this->request->getGet('filename') ?? ''));
         if ($filename === '' || $filename === '.' || $filename === '..') {
             return $this->fail('Invalid filename.', 400);
         }
@@ -110,15 +111,30 @@ class SessionsController extends ResourceController
             return $this->fail('Evidence file not found.', 404);
         }
 
-        $mime = mime_content_type($path) ?: 'application/octet-stream';
-        if (str_starts_with($mime, 'text/') || $mime === 'application/json') {
-            $mime .= '; charset=UTF-8';
+        $raw  = file_get_contents($path);
+        if ($raw === false) {
+            return $this->fail('Evidence file unreadable.', 500);
         }
 
+        $ext  = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'png'         => 'image/png',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'webp'        => 'image/webp',
+            'gif'         => 'image/gif',
+            default       => (mime_content_type($path) ?: 'application/octet-stream'),
+        };
+
+        // Bypass ResourceController JSON formatting for binary payloads.
+        $this->format = null;
+
         return $this->response
+            ->setStatusCode(200)
             ->setHeader('Content-Type', $mime)
+            ->setHeader('Content-Length', (string) strlen($raw))
             ->setHeader('Cache-Control', 'private, max-age=60')
-            ->setBody((string) file_get_contents($path));
+            ->setHeader('X-Content-Type-Options', 'nosniff')
+            ->setBody($raw);
     }
 
     /** @return list<array<string, mixed>> */
@@ -197,7 +213,7 @@ class SessionsController extends ResourceController
                 $out[] = [
                     'filename'   => $name,
                     'kind'       => 'screenshot',
-                    'url'        => '/v1/sessions/' . (int) $session['id'] . '/evidence/' . rawurlencode($name),
+                    'url'        => '/v1/sessions/' . (int) $session['id'] . '/evidence?filename=' . rawurlencode($name),
                     'created_at' => date('Y-m-d H:i:s', (int) filemtime($file)),
                 ];
             }

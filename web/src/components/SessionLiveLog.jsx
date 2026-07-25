@@ -6,30 +6,75 @@ import { fmtDate } from '../lib/format.js'
 
 function EvidenceImage({ sessionId, filename }) {
   const [src, setSrc] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    let revoked = ''
+    let objectUrl = ''
     let cancelled = false
 
     ;(async () => {
+      setError('')
+      setSrc('')
       try {
-        const res = await api.get(v1(`/sessions/${sessionId}/evidence/${encodeURIComponent(filename)}`), {
+        const res = await api.get(v1(`/sessions/${sessionId}/evidence`), {
+          params: { filename },
           responseType: 'blob',
+          // Avoid default Content-Type: application/json on binary GET
+          headers: { 'Content-Type': undefined },
+          timeout: 60_000,
         })
         if (cancelled) return
-        const url = URL.createObjectURL(res.data)
-        revoked = url
-        setSrc(url)
-      } catch {
-        if (!cancelled) setSrc('')
+
+        const blob = res.data
+        if (!(blob instanceof Blob) || blob.size === 0) {
+          setError('Empty image response')
+          return
+        }
+        // API errors often come back as JSON with 4xx — still a Blob when responseType is blob.
+        if (blob.type && blob.type.includes('json')) {
+          const text = await blob.text()
+          let msg = 'Failed to load image'
+          try {
+            msg = JSON.parse(text)?.error || msg
+          } catch {
+            /* keep default */
+          }
+          setError(msg)
+          return
+        }
+
+        objectUrl = URL.createObjectURL(blob)
+        setSrc(objectUrl)
+      } catch (err) {
+        if (cancelled) return
+        const status = err?.response?.status
+        const data = err?.response?.data
+        if (data instanceof Blob) {
+          try {
+            const parsed = JSON.parse(await data.text())
+            setError(parsed?.error || `HTTP ${status || 'error'}`)
+            return
+          } catch {
+            /* fall through */
+          }
+        }
+        setError(err?.response?.data?.error || err?.message || `HTTP ${status || 'error'}`)
       }
     })()
 
     return () => {
       cancelled = true
-      if (revoked) URL.revokeObjectURL(revoked)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [sessionId, filename])
+
+  if (error) {
+    return (
+      <div className="flex h-36 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-2 text-center text-xs text-red-700">
+        {error}
+      </div>
+    )
+  }
 
   if (!src) {
     return (
