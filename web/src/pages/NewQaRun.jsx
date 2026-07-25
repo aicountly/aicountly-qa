@@ -36,7 +36,12 @@ export default function NewQaRun() {
       return data?.data
     },
     onSuccess: (d) => {
-      if (d?.qa_run_id) nav(`/session-plans?qa_run_id=${encodeURIComponent(d.qa_run_id)}`)
+      const planId = d?.session_plan?.id
+      if (planId) {
+        nav(`/session-plans/${planId}`)
+      } else if (d?.qa_run_id) {
+        nav(`/session-plans?qa_run_id=${encodeURIComponent(d.qa_run_id)}`)
+      }
     },
   })
 

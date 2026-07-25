@@ -53,6 +53,7 @@ $routes->group('v1', static function ($routes) {
         $routes->post('ping', 'Api\\V1\\WorkerController::ping');
         $routes->post('sessions/(:num)/claim', 'Api\\V1\\WorkerController::claim/$1');
         $routes->post('sessions/(:num)/heartbeat', 'Api\\V1\\WorkerController::heartbeat/$1');
+        $routes->post('sessions/(:num)/progress', 'Api\\V1\\WorkerController::progress/$1');
         $routes->post('sessions/(:num)/result', 'Api\\V1\\WorkerController::postResult/$1');
         $routes->post('sessions/(:num)/evidence', 'Api\\V1\\WorkerController::uploadEvidence/$1');
         $routes->get('credentials/(:num)', 'Api\\V1\\WorkerController::credentials/$1');
@@ -80,6 +81,8 @@ $routes->group('v1', static function ($routes) {
         $routes->post('session-plans/(:num)/approve', 'Api\\V1\\SessionPlansController::approve/$1', ['filter' => 'role:Owner,QA Manager']);
 
         $routes->resource('runs', ['controller' => 'Api\\V1\\RunsController']);
+        $routes->get('sessions/(:num)/live', 'Api\\V1\\SessionsController::live/$1');
+        $routes->get('sessions/(:num)/evidence/(:segment)', 'Api\\V1\\SessionsController::evidence/$1/$2');
         $routes->resource('sessions', ['controller' => 'Api\\V1\\SessionsController']);
 
         $routes->resource('test-data-packs', ['controller' => 'Api\\V1\\TestDataPacksController']);

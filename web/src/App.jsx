@@ -10,6 +10,7 @@ import TargetProfiles from './pages/TargetProfiles.jsx'
 import TargetProfileForm from './pages/TargetProfileForm.jsx'
 import NewQaRun from './pages/NewQaRun.jsx'
 import SessionPlans from './pages/SessionPlans.jsx'
+import SessionPlanDetail from './pages/SessionPlanDetail.jsx'
 import QaRuns from './pages/QaRuns.jsx'
 import QaRunDetail from './pages/QaRunDetail.jsx'
 import ErrorRegister from './pages/ErrorRegister.jsx'
@@ -63,9 +64,10 @@ export default function App() {
       <Route path="/target-profiles/new" element={<Authed roles={['Owner', 'QA Manager']}><TargetProfileForm /></Authed>} />
       <Route path="/target-profiles/:id/edit" element={<Authed roles={['Owner', 'QA Manager']}><TargetProfileForm /></Authed>} />
       <Route path="/new-qa-run"       element={<Authed roles={['Owner', 'QA Manager']}><NewQaRun /></Authed>} />
-      <Route path="/session-plans"    element={<Authed><SessionPlans /></Authed>} />
       <Route path="/qa-runs"          element={<Authed><QaRuns /></Authed>} />
       <Route path="/qa-runs/:id"      element={<Authed><QaRunDetail /></Authed>} />
+      <Route path="/session-plans"    element={<Authed><SessionPlans /></Authed>} />
+      <Route path="/session-plans/:id" element={<Authed><SessionPlanDetail /></Authed>} />
       <Route path="/error-register"   element={<Authed><ErrorRegister /></Authed>} />
       <Route path="/qa-reports"       element={<Authed><QaReports /></Authed>} />
       <Route path="/test-data-packs"  element={<Authed><TestDataPacks /></Authed>} />

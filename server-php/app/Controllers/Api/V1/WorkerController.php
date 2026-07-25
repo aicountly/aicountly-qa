@@ -4,15 +4,16 @@ namespace App\Controllers\Api\V1;
 
 use App\Controllers\BaseApiController;
 use App\Models\CredentialsModel;
+use App\Models\ErrorRegisterModel;
+use App\Models\ExpectedResultsModel;
 use App\Models\RunsModel;
+use App\Models\SessionEventsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
 use App\Models\TargetProfilesModel;
 use App\Models\TestDataPacksModel;
-use App\Models\ExpectedResultsModel;
 use App\Models\ValidationResultsModel;
 use App\Models\ValidationRulesModel;
-use App\Models\ErrorRegisterModel;
 use Config\Services;
 
 /**
@@ -53,6 +54,14 @@ class WorkerController extends BaseApiController
             ]);
         }
 
+        $this->recordEvent(
+            (int) $session['id'],
+            (string) $session['qa_run_id'],
+            'started',
+            'Worker claimed session and started execution: ' . (string) ($session['name'] ?? $session['template_code']),
+            ['step_key' => (string) ($session['template_code'] ?? ''), 'metadata' => ['worker_id' => $workerId]]
+        );
+
         Services::auditService()->log('session_execution_start', [
             'qa_run_id'  => $session['qa_run_id'],
             'session_id' => $session['id'],
@@ -74,18 +83,92 @@ class WorkerController extends BaseApiController
     {
         $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
         $now = date('Y-m-d H:i:s');
+        $session = (new SessionsModel())->find($sessionId);
         (new SessionsModel())->update($sessionId, [
             'status' => 'claimed',
             'claimed_by_worker' => $workerId,
             'claimed_at' => $now,
             'last_heartbeat_at' => $now,
         ]);
+        if ($session) {
+            $this->recordEvent(
+                $sessionId,
+                (string) $session['qa_run_id'],
+                'claimed',
+                'Session claimed by worker ' . $workerId,
+                ['metadata' => ['worker_id' => $workerId]]
+            );
+        }
         return $this->ok(['claimed' => true]);
     }
 
     public function heartbeat(int $sessionId)
     {
+        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        Services::workerStatus()->recordHeartbeat($workerId);
+
         (new SessionsModel())->update($sessionId, ['last_heartbeat_at' => date('Y-m-d H:i:s')]);
+
+        $body = $this->input();
+        $message = trim((string) ($body['message'] ?? $body['activity'] ?? ''));
+        if ($message !== '') {
+            $session = (new SessionsModel())->find($sessionId);
+            if ($session) {
+                $this->recordEvent(
+                    $sessionId,
+                    (string) $session['qa_run_id'],
+                    'heartbeat',
+                    $message,
+                    [
+                        'step_key'    => isset($body['step']) ? (string) $body['step'] : null,
+                        'step_index'  => $body['step_index'] ?? null,
+                        'total_steps' => $body['total_steps'] ?? null,
+                        'metadata'    => is_array($body['metadata'] ?? null) ? $body['metadata'] : null,
+                    ]
+                );
+            }
+        }
+
+        return $this->ok(['ok' => true]);
+    }
+
+    /**
+     * Worker posts live activity while executing a session (step text, progress).
+     */
+    public function progress(int $sessionId)
+    {
+        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        Services::workerStatus()->recordHeartbeat($workerId);
+
+        $session = (new SessionsModel())->find($sessionId);
+        if (! $session) {
+            return $this->fail('Session not found.', 404);
+        }
+
+        $body = $this->input();
+        $message = trim((string) ($body['message'] ?? $body['activity'] ?? ''));
+        if ($message === '') {
+            return $this->fail('message is required.', 400);
+        }
+
+        (new SessionsModel())->update($sessionId, [
+            'status'             => in_array($session['status'] ?? '', ['queued', 'claimed'], true) ? 'running' : $session['status'],
+            'last_heartbeat_at'  => date('Y-m-d H:i:s'),
+        ]);
+
+        $this->recordEvent(
+            $sessionId,
+            (string) $session['qa_run_id'],
+            'progress',
+            $message,
+            [
+                'step_key'    => isset($body['step']) ? (string) $body['step'] : null,
+                'step_index'  => $body['step_index'] ?? null,
+                'total_steps' => $body['total_steps'] ?? null,
+                'metadata'    => is_array($body['metadata'] ?? null) ? $body['metadata'] : null,
+            ]
+        );
+
         return $this->ok(['ok' => true]);
     }
 
@@ -176,10 +259,22 @@ class WorkerController extends BaseApiController
             }
         }
 
+        $finalStatus = in_array($status, ['passed', 'failed', 'skipped', 'partial'], true)
+            ? ($status === 'passed' ? 'completed' : $status)
+            : 'completed';
+
         (new SessionsModel())->update($sessionId, [
-            'status'       => in_array($status, ['passed', 'failed', 'skipped', 'partial'], true) ? ($status === 'passed' ? 'completed' : $status) : 'completed',
+            'status'       => $finalStatus,
             'completed_at' => date('Y-m-d H:i:s'),
         ]);
+
+        $this->recordEvent(
+            $sessionId,
+            (string) $session['qa_run_id'],
+            'completed',
+            'Session finished with status: ' . $status . ' (severity: ' . $severity . ')',
+            ['metadata' => ['status' => $status, 'severity' => $severity, 'passed' => $passed, 'failed' => $failed]]
+        );
 
         // Generate the session-level report.
         $report = Services::reportService()->buildSessionReport($sessionId);
@@ -236,7 +331,25 @@ class WorkerController extends BaseApiController
             'metadata'   => ['kind' => $kind, 'path' => $path],
         ]);
 
-        return $this->ok(['path' => $path]);
+        $label = $kind !== '' ? $kind : 'evidence';
+        $this->recordEvent(
+            $sessionId,
+            (string) $session['qa_run_id'],
+            'evidence',
+            'Captured ' . $label . ': ' . $name,
+            ['metadata' => ['kind' => $kind, 'filename' => $name, 'path' => $path]]
+        );
+
+        return $this->ok(['path' => $path, 'filename' => $name]);
+    }
+
+    private function recordEvent(int $sessionId, string $qaRunId, string $type, string $message, array $extra = []): void
+    {
+        try {
+            (new SessionEventsModel())->record($sessionId, $qaRunId, $type, $message, $extra);
+        } catch (\Throwable $e) {
+            log_message('error', 'Failed to record session event: {msg}', ['msg' => $e->getMessage()]);
+        }
     }
 
     private function loadTemplate(string $product, string $code): ?array
