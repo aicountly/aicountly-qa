@@ -128,24 +128,26 @@ class WorkerController extends BaseApiController
 
         (new SessionsModel())->update($sessionId, ['last_heartbeat_at' => date('Y-m-d H:i:s')]);
 
-        $body = $this->input();
+        $session = (new SessionsModel())->find($sessionId);
+        $body    = $this->input();
         $message = trim((string) ($body['message'] ?? $body['activity'] ?? ''));
-        if ($message !== '') {
-            $session = (new SessionsModel())->find($sessionId);
-            if ($session) {
-                $this->recordEvent(
-                    $sessionId,
-                    (string) $session['qa_run_id'],
-                    'heartbeat',
-                    $message,
-                    [
-                        'step_key'    => isset($body['step']) ? (string) $body['step'] : null,
-                        'step_index'  => $body['step_index'] ?? null,
-                        'total_steps' => $body['total_steps'] ?? null,
-                        'metadata'    => is_array($body['metadata'] ?? null) ? $body['metadata'] : null,
-                    ]
-                );
-            }
+
+        if ($session && $message !== '') {
+            $this->recordEvent(
+                $sessionId,
+                (string) $session['qa_run_id'],
+                'heartbeat',
+                $message,
+                [
+                    'step_key'    => isset($body['step']) ? (string) $body['step'] : null,
+                    'step_index'  => $body['step_index'] ?? null,
+                    'total_steps' => $body['total_steps'] ?? null,
+                    'metadata'    => is_array($body['metadata'] ?? null) ? $body['metadata'] : null,
+                ]
+            );
+        } elseif ($session && in_array($session['status'] ?? '', ['claimed', 'running'], true)) {
+            // Older workers send empty heartbeats — still surface liveness in Live Log (throttled).
+            $this->recordThrottledAliveEvent($sessionId, (string) $session['qa_run_id'], $workerId);
         }
 
         return $this->ok(['ok' => true]);
@@ -287,11 +289,21 @@ class WorkerController extends BaseApiController
             'completed_at' => date('Y-m-d H:i:s'),
         ]);
 
+        $module = strtolower((string) ($session['module'] ?? ''));
+        $isLogin = $module === 'login' || str_contains(strtolower((string) ($session['template_code'] ?? '')), 'login');
+        $okLogin = in_array($status, ['passed', 'completed'], true)
+            || ($status === 'partial' && $failed === 0);
+        $doneMsg = $isLogin
+            ? ($okLogin
+                ? 'LOGIN SUCCESSFUL — Smart Books sign-in completed (' . $status . ').'
+                : 'LOGIN FAILED / INCOMPLETE — status ' . $status . ' (severity: ' . $severity . '). Check credentials, login URL, and View log screenshots.')
+            : 'Session finished with status: ' . $status . ' (severity: ' . $severity . ')';
+
         $this->recordEvent(
             $sessionId,
             (string) $session['qa_run_id'],
-            'completed',
-            'Session finished with status: ' . $status . ' (severity: ' . $severity . ')',
+            $okLogin && $isLogin ? 'login_success' : 'completed',
+            $doneMsg,
             ['metadata' => ['status' => $status, 'severity' => $severity, 'passed' => $passed, 'failed' => $failed]]
         );
 
@@ -368,6 +380,34 @@ class WorkerController extends BaseApiController
             (new SessionEventsModel())->record($sessionId, $qaRunId, $type, $message, $extra);
         } catch (\Throwable $e) {
             log_message('error', 'Failed to record session event: {msg}', ['msg' => $e->getMessage()]);
+        }
+    }
+
+    /** At most one alive line every 25s so empty-heartbeat workers still update Live Log. */
+    private function recordThrottledAliveEvent(int $sessionId, string $qaRunId, string $workerId): void
+    {
+        try {
+            $last = (new SessionEventsModel())
+                ->where('session_id', $sessionId)
+                ->orderBy('id', 'DESC')
+                ->first();
+
+            if ($last && ! empty($last['created_at'])) {
+                $age = time() - strtotime((string) $last['created_at']);
+                if ($age >= 0 && $age < 25) {
+                    return;
+                }
+            }
+
+            $this->recordEvent(
+                $sessionId,
+                $qaRunId,
+                'alive',
+                'Worker is still running this session (browser login in progress). For step-by-step logs, deploy the latest Playwright worker and restart PM2.',
+                ['metadata' => ['worker_id' => $workerId]]
+            );
+        } catch (\Throwable $e) {
+            log_message('error', 'Failed to record alive event: {msg}', ['msg' => $e->getMessage()]);
         }
     }
 

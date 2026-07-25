@@ -66,19 +66,12 @@ class SessionsController extends ResourceController
 
         $screenshots = $this->listScreenshots($session);
         $result      = (new SessionResultsModel())->where('session_id', $sessionId)->first();
+        $outcome     = $this->buildOutcome($session, $result, $events);
 
         $lastEvent = $events !== [] ? $events[array_key_last($events)] : null;
         $activity  = is_array($lastEvent) ? (string) ($lastEvent['message'] ?? '') : '';
         if ($activity === '') {
-            $activity = match ((string) ($session['status'] ?? '')) {
-                'queued'  => 'Waiting in queue for the QA worker to claim this session.',
-                'claimed' => 'Session claimed — worker is preparing to start.',
-                'running' => 'Session is running. Waiting for the next worker progress update…',
-                'completed', 'passed' => 'Session completed successfully.',
-                'failed'  => 'Session failed.',
-                'skipped' => 'Session was skipped.',
-                default   => 'No live activity yet.',
-            };
+            $activity = (string) ($outcome['detail'] ?? 'No live activity yet.');
         }
 
         return $this->respond([
@@ -86,6 +79,7 @@ class SessionsController extends ResourceController
             'data' => [
                 'session'           => $session,
                 'activity'          => $activity,
+                'outcome'           => $outcome,
                 'events'            => $events,
                 'screenshots'       => $screenshots,
                 'result'            => $result,
@@ -254,5 +248,75 @@ class SessionsController extends ResourceController
         }
 
         return null;
+    }
+
+    /**
+     * Clear LOGIN SUCCESS / FAILED banner for the Live Log UI.
+     *
+     * @param list<array<string, mixed>> $events
+     * @return array{state: string, label: string, detail: string}
+     */
+    private function buildOutcome(array $session, ?array $result, array $events): array
+    {
+        $status = (string) ($session['status'] ?? '');
+        $module = strtolower((string) ($session['module'] ?? ''));
+        $isLogin = $module === 'login'
+            || str_contains(strtolower((string) ($session['template_code'] ?? '')), 'login');
+
+        if (in_array($status, ['queued', 'claimed', 'running'], true)) {
+            return [
+                'state'  => 'in_progress',
+                'label'  => $isLogin ? 'LOGIN IN PROGRESS' : 'SESSION IN PROGRESS',
+                'detail' => $isLogin
+                    ? 'Worker is signing in to Smart Books. Wait for LOGIN SUCCESSFUL or LOGIN FAILED.'
+                    : 'Worker is still executing this session.',
+            ];
+        }
+
+        $resStatus = strtolower((string) ($result['status'] ?? $status));
+        $failed    = (int) ($result['failed_count'] ?? 0);
+        $fatal     = null;
+        $rj        = $result['result_json'] ?? null;
+        if (is_string($rj)) {
+            $rj = json_decode($rj, true);
+        }
+        if (is_array($rj)) {
+            $fatal = $rj['fatal_error'] ?? null;
+        }
+
+        $success = in_array($resStatus, ['passed', 'completed'], true)
+            || ($resStatus === 'partial' && $failed === 0 && empty($fatal));
+
+        if ($isLogin) {
+            if ($success) {
+                return [
+                    'state'  => 'success',
+                    'label'  => 'LOGIN SUCCESSFUL',
+                    'detail' => 'Smart Books login completed. You can proceed to other QA modules.',
+                ];
+            }
+
+            return [
+                'state'  => 'failed',
+                'label'  => 'LOGIN FAILED',
+                'detail' => $fatal
+                    ? (string) $fatal
+                    : 'Login did not complete successfully. Check credentials, login URL, and screenshots.',
+            ];
+        }
+
+        if ($success) {
+            return [
+                'state'  => 'success',
+                'label'  => 'SESSION PASSED',
+                'detail' => 'Session finished successfully.',
+            ];
+        }
+
+        return [
+            'state'  => 'failed',
+            'label'  => 'SESSION FAILED',
+            'detail' => $fatal ? (string) $fatal : ('Status: ' . ($resStatus ?: $status)),
+        ];
     }
 }

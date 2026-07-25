@@ -63,6 +63,7 @@ export default function SessionLiveLog({ sessionId, sessionName, onClose }) {
   const events = live.data?.events || []
   const screenshots = live.data?.screenshots || []
   const status = live.data?.session?.status
+  const outcome = live.data?.outcome
   const isLive = ['queued', 'claimed', 'running'].includes(status)
 
   useEffect(() => {
@@ -76,11 +77,17 @@ export default function SessionLiveLog({ sessionId, sessionName, onClose }) {
     [sessionName, live.data?.session?.name, sessionId],
   )
 
+  const outcomeBox = outcome?.state === 'success'
+    ? 'border-aicountly-200 bg-aicountly-50 text-aicountly-900'
+    : outcome?.state === 'failed'
+      ? 'border-red-200 bg-red-50 text-red-900'
+      : 'border-slate-200 bg-slate-50 text-slate-800'
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true">
       <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 px-4 py-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-neutral-900">Live session log</h2>
               {status && <StatusBadge status={status} />}
@@ -92,6 +99,12 @@ export default function SessionLiveLog({ sessionId, sessionName, onClose }) {
               )}
             </div>
             <p className="mt-0.5 text-xs text-neutral-500">{title}</p>
+            {outcome && (
+              <div className={`mt-2 rounded-lg border px-3 py-2 text-sm ${outcomeBox}`}>
+                <div className="font-semibold tracking-wide">{outcome.label}</div>
+                {outcome.detail && <p className="mt-0.5 text-xs opacity-90">{outcome.detail}</p>}
+              </div>
+            )}
             {live.data?.activity && (
               <p className="mt-1 text-xs text-neutral-700">
                 <span className="font-medium text-neutral-800">Now: </span>
