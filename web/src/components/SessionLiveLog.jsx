@@ -121,6 +121,11 @@ export default function SessionLiveLog({ sessionId, sessionName, onClose }) {
             {!live.isLoading && events.length === 0 && (
               <div className="text-neutral-400">No activity yet. The worker will post updates as the session runs.</div>
             )}
+            {!live.isLoading && events.length === 1 && isLive && (
+              <div className="mb-2 text-amber-300">
+                Waiting for worker step updates… If this stays stuck, restart the Playwright worker with the latest build (live progress enabled).
+              </div>
+            )}
             {events.map((ev, i) => (
               <div key={ev.id ?? i} className="mb-1.5 border-b border-white/5 pb-1.5 last:border-0">
                 <div className="text-neutral-500">
