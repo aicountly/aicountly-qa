@@ -15,6 +15,9 @@ const statusStyles = {
   draft:                 'bg-neutral-100 text-neutral-700',
   approved:              'bg-aicountly-100 text-aicountly-800',
   rejected:              'bg-red-100 text-red-800',
+  open:                  'bg-red-50 text-red-800',
+  investigating:         'bg-amber-100 text-amber-900',
+  closed:                'bg-neutral-100 text-neutral-600',
 }
 
 export function StatusBadge({ status }) {

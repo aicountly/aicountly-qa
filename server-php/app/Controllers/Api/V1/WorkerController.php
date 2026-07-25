@@ -264,18 +264,28 @@ class WorkerController extends BaseApiController
                 'created_at' => date('Y-m-d H:i:s'),
             ]);
 
-            // Roll up to error register on failure.
+            // Roll up to error register on failure (per-rule — not the whole-session rule dump).
             if (empty($v['passed'])) {
+                $ruleCode = (string) ($v['rule_code'] ?? '');
+                $module   = (string) ($session['module'] ?? 'unknown');
+                $notes    = trim((string) ($v['notes'] ?? ''));
+                $expected = isset($v['expected']) ? (string) $v['expected'] : '';
+                $actual   = isset($v['actual']) ? (string) $v['actual'] : '';
+                $sample   = $notes !== ''
+                    ? $notes
+                    : trim('expected=' . $expected . ' actual=' . $actual, ' =');
+
                 (new ErrorRegisterModel())->upsertSignature([
-                    'signature'              => sha1(($v['rule_code'] ?? '') . '|' . ($v['expected'] ?? '') . '|' . ($v['actual'] ?? '')),
-                    'title'                  => 'Failed: ' . (string) ($v['rule_code'] ?? ''),
-                    'severity'               => (string) ($v['severity'] ?? 'medium'),
-                    'product_name'           => $body['product_name'] ?? null,
-                    'module'                 => $session['module'] ?? null,
-                    'last_seen_run_id'       => $session['qa_run_id'],
-                    'last_session_id'        => $sessionId,
-                    'sample_message'         => (string) ($v['notes'] ?? ''),
-                    'suggested_developer_area' => (string) ($body['suggested_area'] ?? ''),
+                    'signature'                => sha1($ruleCode . '|' . $expected . '|' . $actual),
+                    'title'                    => 'Failed: ' . ($ruleCode !== '' ? $ruleCode : 'unknown'),
+                    'severity'                 => (string) ($v['severity'] ?? 'medium'),
+                    'product_name'             => $body['product_name'] ?? null,
+                    'module'                   => $session['module'] ?? null,
+                    'last_seen_run_id'         => $session['qa_run_id'],
+                    'last_session_id'          => $sessionId,
+                    'sample_message'           => $sample !== '' ? $sample : null,
+                    'suggested_developer_area' => 'Likely area: ' . $module
+                        . ' module — investigate rule ' . ($ruleCode !== '' ? $ruleCode : 'unknown') . '.',
                 ]);
             }
         }

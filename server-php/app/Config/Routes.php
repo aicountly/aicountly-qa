@@ -93,7 +93,11 @@ $routes->group('v1', static function ($routes) {
         $routes->resource('validation-rules', ['controller' => 'Api\\V1\\ValidationRulesController']);
         $routes->get('validation-results', 'Api\\V1\\ValidationController::index');
 
-        $routes->resource('error-register', ['controller' => 'Api\\V1\\ErrorRegisterController']);
+        $routes->resource('error-register', [
+            'controller' => 'Api\\V1\\ErrorRegisterController',
+            'only'       => ['index', 'show', 'update'],
+        ]);
+        $routes->patch('error-register/(:num)', 'Api\\V1\\ErrorRegisterController::update/$1', ['filter' => 'role:Owner,QA Manager']);
 
         $routes->get('reports', 'Api\\V1\\ReportsController::index');
         $routes->get('reports/session/(:num)/html', 'Api\\V1\\ReportsController::sessionHtml/$1');

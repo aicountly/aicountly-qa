@@ -20,4 +20,26 @@ class ErrorRegisterController extends ResourceController
         $rows = $this->model->orderBy('last_seen_at', 'DESC')->limit(500)->findAll();
         return $this->respond(['ok' => true, 'data' => $rows]);
     }
+
+    public function update($id = null)
+    {
+        $row = $this->model->find($id);
+        if (! $row) {
+            return $this->failNotFound();
+        }
+
+        $body   = $this->request->getJSON(true);
+        $body   = is_array($body) ? $body : [];
+        $status = (string) ($body['status'] ?? '');
+        if (! in_array($status, ['open', 'investigating', 'closed'], true)) {
+            return $this->fail('Status must be open, investigating, or closed.', 400);
+        }
+
+        $this->model->update((int) $id, ['status' => $status]);
+
+        return $this->respond([
+            'ok'   => true,
+            'data' => $this->model->find($id),
+        ]);
+    }
 }

@@ -24,13 +24,28 @@ class ErrorRegisterModel extends Model
         $now = date('Y-m-d H:i:s');
 
         if ($existing) {
-            $this->update($existing['id'], [
+            $patch = [
                 'last_seen_run_id' => $row['last_seen_run_id'] ?? $existing['last_seen_run_id'],
                 'last_session_id'  => $row['last_session_id']  ?? $existing['last_session_id'],
                 'last_seen_at'     => $now,
                 'count'            => ((int) $existing['count']) + 1,
                 'severity'         => $row['severity'] ?? $existing['severity'],
-            ]);
+            ];
+            // Refresh guidance/sample when a newer occurrence provides clearer text.
+            if (! empty($row['suggested_developer_area'])) {
+                $patch['suggested_developer_area'] = $row['suggested_developer_area'];
+            }
+            if (! empty($row['sample_message'])) {
+                $patch['sample_message'] = $row['sample_message'];
+            }
+            if (! empty($row['title'])) {
+                $patch['title'] = $row['title'];
+            }
+            // Re-open if it was closed and the failure appeared again.
+            if (($existing['status'] ?? '') === 'closed') {
+                $patch['status'] = 'open';
+            }
+            $this->update($existing['id'], $patch);
             return (int) $existing['id'];
         }
 
