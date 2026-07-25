@@ -66,12 +66,38 @@ class RunsController extends ResourceController
 
             $rj = is_array($res['result_json'] ?? null) ? $res['result_json'] : [];
             $fatal = $rj['fatal_error'] ?? null;
-            if ($fatal === null && ! empty($rj['failed_steps']) && is_array($rj['failed_steps'])) {
-                $first = $rj['failed_steps'][0] ?? null;
-                $fatal = is_array($first) ? ($first['error'] ?? null) : null;
+            $failedSteps = [];
+            if (! empty($rj['failed_steps']) && is_array($rj['failed_steps'])) {
+                foreach ($rj['failed_steps'] as $step) {
+                    if (is_array($step)) {
+                        $failedSteps[] = (string) ($step['kind'] ?? $step['step'] ?? $step['error'] ?? 'step');
+                        if ($fatal === null && ! empty($step['error'])) {
+                            $fatal = (string) $step['error'];
+                        }
+                    } elseif (is_string($step)) {
+                        $failedSteps[] = $step;
+                    }
+                }
             }
-            if ($fatal === null && ($res['status'] ?? '') === 'partial' && (int) ($rj['workflow_steps'] ?? 0) <= 1) {
+
+            $module = strtolower((string) ($s['module'] ?? ''));
+            $isLoginSession = $module === 'login' || str_contains(strtolower((string) ($s['template_code'] ?? '')), 'login');
+
+            // Login early-exit: ignore noisy accounting rule dumps and show the real blocker.
+            if ($isLoginSession && ($failedSteps !== [] || ($res['status'] ?? '') === 'partial')) {
+                $stepList = $failedSteps !== [] ? implode(', ', array_unique($failedSteps)) : 'login workflow';
+                $fatal = 'Login did not complete. Failed steps: ' . $stepList
+                    . '. Check Target App Profile login URL, username, and saved password. Selectors must match the Smart Books login form.';
+            } elseif ($fatal === null && ($res['status'] ?? '') === 'partial' && (int) ($rj['workflow_steps'] ?? 0) <= 1) {
                 $fatal = 'Session failed early (often missing target credentials or login error).';
+            }
+
+            $suggestedArea   = $res['suggested_area'] ?? null;
+            $suggestedPrompt = $res['suggested_prompt'] ?? null;
+            if ($isLoginSession && $fatal !== null) {
+                // Hide misleading "all product rules failed" guidance for login sessions.
+                $suggestedArea   = 'Login credentials / login page selectors';
+                $suggestedPrompt = 'Verify Book Login profile: correct login URL, username, and saved password. Confirm the Smart Books login fields match email/username + password inputs.';
             }
 
             $sessions[$i]['result_summary'] = [
@@ -79,9 +105,10 @@ class RunsController extends ResourceController
                 'severity'         => $res['severity'] ?? null,
                 'passed_count'     => (int) ($res['passed_count'] ?? 0),
                 'failed_count'     => (int) ($res['failed_count'] ?? 0),
-                'suggested_area'   => $res['suggested_area'] ?? null,
-                'suggested_prompt' => $res['suggested_prompt'] ?? null,
+                'suggested_area'   => $suggestedArea,
+                'suggested_prompt' => $suggestedPrompt,
                 'fatal_error'      => $fatal,
+                'failed_steps'     => $failedSteps,
                 'has_report'       => isset($reportBySession[$sid]),
             ];
         }

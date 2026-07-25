@@ -22,20 +22,23 @@ function SessionIssue({ summary }) {
   if (!summary) return <span className="text-xs text-neutral-400">—</span>
 
   const fatal = humanizeFatalError(summary.fatal_error)
-  const showPrompt = summary.suggested_prompt && !fatal
+  const showPrompt = summary.suggested_prompt && !!fatal
 
   return (
     <div className="max-w-md space-y-1">
       {fatal && (
         <p className="text-xs font-medium text-red-800">{fatal}</p>
       )}
-      {!fatal && summary.suggested_area && (
-        <p className="text-xs text-amber-900">{summary.suggested_area}</p>
+      {fatal && summary.suggested_area && (
+        <p className="text-xs text-amber-900">Likely area: {summary.suggested_area}</p>
       )}
       {showPrompt && (
-        <p className="text-xs text-neutral-600 line-clamp-3" title={summary.suggested_prompt}>
+        <p className="text-xs text-neutral-600 line-clamp-4" title={summary.suggested_prompt}>
           {summary.suggested_prompt}
         </p>
+      )}
+      {!fatal && summary.suggested_area && (
+        <p className="text-xs text-amber-900">{summary.suggested_area}</p>
       )}
       {!fatal && !showPrompt && summary.failed_count > 0 && (
         <p className="text-xs text-amber-800">

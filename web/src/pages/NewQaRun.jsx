@@ -7,10 +7,10 @@ import ProductionBanner from '../components/ProductionBanner.jsx'
 import { envLabel } from '../lib/format.js'
 
 const samplePrompts = [
+  'Login only to Smart Books. Verify the login form accepts credentials and the app loads after sign-in. Do not run any other modules until login succeeds.',
   'Login to Books sandbox. Verify dashboard loads, menus open, and report pages render without console errors. Do not create dummy data. Run as smoke check.',
   'Full functional QA on Books sandbox. Create deterministic ledgers, items, vouchers; verify GST, Trial Balance, P&L, Balance Sheet against expected results.',
   'Focus on GST. Create sales and purchase vouchers; validate GSTR-1, GSTR-3B, HSN summary against expected output/input GST.',
-  'Production basic check. Login only, confirm dashboard and report pages load, capture console + network errors. No dummy data.',
 ]
 
 export default function NewQaRun() {

@@ -41,9 +41,28 @@ class WorkerController extends BaseApiController
         $pack    = $packs[0] ?? null;
         $expected = $pack ? (new ExpectedResultsModel())->forPack((int) $pack['id']) : [];
 
-        $rules = (new ValidationRulesModel())->activeForProduct($profile['product_name']);
+        $template = $this->loadTemplate(
+            $profile['product_name'],
+            (string) $session['template_code'],
+            (string) ($profile['environment'] ?? '')
+        );
 
-        $template = $this->loadTemplate($profile['product_name'], (string) $session['template_code']);
+        // Only send rules declared on this session template — never the full product catalogue.
+        $allowedCodes = array_values(array_filter(array_map('strval', (array) ($template['validations'] ?? []))));
+        $allRules     = (new ValidationRulesModel())->activeForProduct($profile['product_name']);
+        $rules        = $allowedCodes === []
+            ? []
+            : array_values(array_filter(
+                $allRules,
+                static fn ($r) => in_array((string) ($r['rule_code'] ?? ''), $allowedCodes, true)
+            ));
+
+        // Login sessions do not need accounting data packs / expected ledgers.
+        $module = strtolower((string) ($session['module'] ?? $template['module'] ?? ''));
+        if ($module === 'login') {
+            $pack     = null;
+            $expected = [];
+        }
 
         // Mark session running and start the QA run clock on first pickup.
         (new SessionsModel())->update($session['id'], ['status' => 'running', 'started_at' => date('Y-m-d H:i:s')]);
@@ -352,12 +371,27 @@ class WorkerController extends BaseApiController
         }
     }
 
-    private function loadTemplate(string $product, string $code): ?array
+    private function loadTemplate(string $product, string $code, string $environment = ''): ?array
     {
         if ($code === '') {
             return null;
         }
         $file = APPPATH . 'Database/Templates/' . $product . '/' . $code . '.json';
-        return is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
+        if (! is_file($file)) {
+            return null;
+        }
+
+        $tpl = json_decode((string) file_get_contents($file), true);
+        if (! is_array($tpl)) {
+            return null;
+        }
+
+        // Prefer env-specific steps (e.g. prod_basic = login only, no company create).
+        $byEnv = $tpl['steps_by_env'] ?? null;
+        if (is_array($byEnv) && $environment !== '' && ! empty($byEnv[$environment]) && is_array($byEnv[$environment])) {
+            $tpl['steps'] = $byEnv[$environment];
+        }
+
+        return $tpl;
     }
 }

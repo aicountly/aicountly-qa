@@ -34,13 +34,14 @@ class SessionPlannerService
         $product   = $profile['product_name'];
         $env       = $profile['environment'];
         $templates = $this->loadTemplates($product);
+        $loginOnly = $this->isLoginOnlyPrompt($promptText, $env);
 
-        // Filter templates based on environment.
+        // Filter templates based on environment + prompt intent.
         $sessions = [];
         $order    = 0;
 
         foreach ($templates as $tpl) {
-            if (! $this->shouldIncludeForEnv($tpl, $env)) {
+            if (! $this->shouldIncludeForEnv($tpl, $env, $loginOnly)) {
                 continue;
             }
 
@@ -87,6 +88,7 @@ class SessionPlannerService
             'generated_at' => gmdate('c'),
             'kind'         => $kind,
             'llm_enabled'  => $llmEnabled,
+            'login_only'   => $loginOnly,
         ];
 
         // Persist the draft plan.
@@ -136,15 +138,41 @@ class SessionPlannerService
         return $templates;
     }
 
-    private function shouldIncludeForEnv(array $tpl, string $env): bool
+    /**
+     * Login-first gate: prod_basic always starts with Login only.
+     * Explicit "login only" prompts also restrict the plan to the Login module.
+     */
+    private function isLoginOnlyPrompt(string $promptText, string $env): bool
     {
-        // On prod_basic / prod_full we keep only login + navigation + report-load sessions
-        // unless production_unlock is enabled (still controlled by ProductionGuardFilter on writes).
-        if ($env === 'prod_basic' || $env === 'prod_full') {
-            $module = strtolower((string) ($tpl['module'] ?? ''));
-            return in_array($module, ['login', 'reports', 'ux'], true)
-                || stripos($tpl['name'], 'navigation') !== false;
+        if ($env === 'prod_basic') {
+            return true;
         }
+
+        $p = strtolower($promptText);
+
+        return str_contains($p, 'login only')
+            || str_contains($p, 'login to')
+            || str_contains($p, 'able to login')
+            || str_contains($p, 'can login')
+            || str_contains($p, 'sign in only')
+            || (str_contains($p, 'production basic') && str_contains($p, 'login'));
+    }
+
+    private function shouldIncludeForEnv(array $tpl, string $env, bool $loginOnly = false): bool
+    {
+        $module = strtolower((string) ($tpl['module'] ?? ''));
+
+        // Focus on Login success before any other module runs.
+        if ($loginOnly) {
+            return $module === 'login';
+        }
+
+        // On prod_full (non login-only) keep login + navigation + report-load sessions.
+        if ($env === 'prod_full') {
+            return in_array($module, ['login', 'reports', 'ux'], true)
+                || stripos((string) ($tpl['name'] ?? ''), 'navigation') !== false;
+        }
+
         return true;
     }
 
