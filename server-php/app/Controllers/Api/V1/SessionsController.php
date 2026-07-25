@@ -185,17 +185,15 @@ class SessionsController extends ResourceController
     {
         $dirs = $this->evidenceDirs($session);
         $out  = [];
+        $seen = [];
 
         foreach ($dirs as $dir) {
-            foreach (glob($dir . '/*') ?: [] as $file) {
-                if (! is_file($file)) {
-                    continue;
-                }
+            foreach ($this->listImageFilesRecursive($dir) as $file) {
                 $name = basename($file);
-                $ext  = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-                if (! in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true)) {
+                if (isset($seen[$name])) {
                     continue;
                 }
+                $seen[$name] = true;
                 $out[] = [
                     'filename'   => $name,
                     'kind'       => 'screenshot',
@@ -208,6 +206,30 @@ class SessionsController extends ResourceController
         usort($out, static fn ($a, $b) => strcmp((string) $a['created_at'], (string) $b['created_at']));
 
         return $out;
+    }
+
+    /** @return list<string> absolute image file paths */
+    private function listImageFilesRecursive(string $dir): array
+    {
+        $files = [];
+        $items = glob(rtrim($dir, '/\\') . '/*') ?: [];
+        foreach ($items as $item) {
+            if (is_dir($item)) {
+                foreach ($this->listImageFilesRecursive($item) as $nested) {
+                    $files[] = $nested;
+                }
+                continue;
+            }
+            if (! is_file($item)) {
+                continue;
+            }
+            $ext = strtolower(pathinfo($item, PATHINFO_EXTENSION));
+            if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true)) {
+                $files[] = $item;
+            }
+        }
+
+        return $files;
     }
 
     /** @return list<string> */
@@ -241,9 +263,10 @@ class SessionsController extends ResourceController
     private function findEvidenceFile(array $session, string $filename): ?string
     {
         foreach ($this->evidenceDirs($session) as $dir) {
-            $candidate = $dir . DIRECTORY_SEPARATOR . $filename;
-            if (is_file($candidate)) {
-                return $candidate;
+            foreach ($this->listImageFilesRecursive($dir) as $file) {
+                if (basename($file) === $filename) {
+                    return $file;
+                }
             }
         }
 

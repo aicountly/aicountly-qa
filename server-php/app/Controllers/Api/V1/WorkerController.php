@@ -337,9 +337,10 @@ class WorkerController extends BaseApiController
     public function uploadEvidence(int $sessionId)
     {
         $file = $this->request->getFile('file');
-        $kind = (string) $this->request->getPost('kind');
+        $kind = (string) ($this->request->getPost('kind') ?? 'screenshot');
         if (! $file || ! $file->isValid()) {
-            return $this->fail('No file uploaded.', 400);
+            $err = $file ? $file->getErrorString() : 'No file field in upload.';
+            return $this->fail('No file uploaded. ' . $err, 400);
         }
         $session = (new SessionsModel())->find($sessionId);
         if (! $session) {
@@ -350,16 +351,38 @@ class WorkerController extends BaseApiController
         $day = substr($session['qa_run_id'], 7, 8);
         $date = $day ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2) : gmdate('Y-m-d');
         $reportsRoot = Services::reportService()->reportsRoot();
-        $dir = $reportsRoot . "/{$product}/{$date}/{$session['qa_run_id']}/session-" . str_pad((string) $session['order_index'], 3, '0', STR_PAD_LEFT);
-        @mkdir($dir, 0775, true);
-        $name = $file->getRandomName();
-        $file->move($dir, $name);
+        $dir = $reportsRoot
+            . "/{$product}/{$date}/{$session['qa_run_id']}/session-"
+            . str_pad((string) $session['order_index'], 3, '0', STR_PAD_LEFT)
+            . '/screenshots';
+        if (! is_dir($dir) && ! @mkdir($dir, 0775, true) && ! is_dir($dir)) {
+            return $this->fail('Cannot create evidence directory on API host. Check QA_REPORTS_DIR permissions.', 500);
+        }
+
+        // Keep a readable name (001-after-login.png) instead of a random hash.
+        $client = (string) $file->getClientName();
+        $safe   = preg_replace('/[^a-zA-Z0-9._-]+/', '-', $client) ?: '';
+        $safe   = trim((string) $safe, '.-');
+        if ($safe === '') {
+            $safe = $file->getRandomName();
+        }
+        // Avoid overwrite collisions on re-upload.
+        $name = $safe;
+        $i    = 1;
+        while (is_file($dir . '/' . $name)) {
+            $name = pathinfo($safe, PATHINFO_FILENAME) . '-' . $i . '.' . (pathinfo($safe, PATHINFO_EXTENSION) ?: 'png');
+            $i++;
+        }
+
+        if (! $file->hasMoved()) {
+            $file->move($dir, $name);
+        }
         $path = $dir . '/' . $name;
 
         Services::auditService()->log('screenshot_captured', [
             'qa_run_id'  => $session['qa_run_id'],
             'session_id' => $sessionId,
-            'metadata'   => ['kind' => $kind, 'path' => $path],
+            'metadata'   => ['kind' => $kind, 'path' => $path, 'filename' => $name],
         ]);
 
         $label = $kind !== '' ? $kind : 'evidence';
@@ -367,7 +390,7 @@ class WorkerController extends BaseApiController
             $sessionId,
             (string) $session['qa_run_id'],
             'evidence',
-            'Captured ' . $label . ': ' . $name,
+            'Uploaded ' . $label . ': ' . $name,
             ['metadata' => ['kind' => $kind, 'filename' => $name, 'path' => $path]]
         );
 
