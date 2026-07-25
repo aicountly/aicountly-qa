@@ -28,9 +28,6 @@ class ReportService
         $validations = (new ValidationResultsModel())->where('session_id', $sessionId)->findAll();
         $run = (new RunsModel())->find($session['qa_run_id']);
 
-        $dir = $this->sessionDir($session, $run);
-        @mkdir($dir, 0775, true);
-
         $json = [
             'qa_run_id'        => $session['qa_run_id'],
             'session'          => $session,
@@ -39,13 +36,15 @@ class ReportService
             'generated_at'     => gmdate('c'),
         ];
 
+        $jsonBody = json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $htmlBody = $this->renderSessionHtml($json);
+
+        $dir = $this->sessionDir($session, $run);
         $jsonPath = $dir . '/report.json';
         $htmlPath = $dir . '/report.html';
+        $written  = $this->writeReportFiles($dir, $jsonPath, $jsonBody, $htmlPath, $htmlBody);
 
-        file_put_contents($jsonPath, json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        file_put_contents($htmlPath, $this->renderSessionHtml($json));
-
-        $reportId = (new ReportsModel())->insert([
+        $reportId = $this->upsertReportRow([
             'qa_run_id'    => $session['qa_run_id'],
             'session_id'   => $sessionId,
             'kind'         => 'session',
@@ -53,12 +52,80 @@ class ReportService
             'html_path'    => $htmlPath,
             'json_path'    => $jsonPath,
             'generated_at' => date('Y-m-d H:i:s'),
-        ], true);
+        ], 'session', $sessionId);
 
-        return ['ok' => true, 'id' => $reportId, 'html' => $htmlPath, 'json' => $jsonPath];
+        return [
+            'ok'          => true,
+            'id'          => $reportId,
+            'qa_run_id'   => $session['qa_run_id'],
+            'html'        => $htmlPath,
+            'json'        => $jsonPath,
+            'written'     => $written,
+            'html_body'   => $htmlBody,
+            'json_body'   => $jsonBody,
+        ];
     }
 
     public function buildFinalReport(string $qaRunId): array
+    {
+        $payload = $this->buildFinalPayload($qaRunId);
+        if (! ($payload['ok'] ?? false)) {
+            return $payload;
+        }
+
+        $json        = $payload['json'];
+        $totals      = $payload['totals'];
+        $run         = $payload['run'];
+        $jsonBody    = json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $htmlBody    = $this->renderFinalHtml($json);
+
+        $dir      = $this->runDir($run);
+        $jsonPath = $dir . '/consolidated.json';
+        $htmlPath = $dir . '/consolidated.html';
+        $written  = $this->writeReportFiles($dir, $jsonPath, $jsonBody, $htmlPath, $htmlBody);
+
+        (new RunsModel())->update($qaRunId, [
+            'status'       => $totals['failed'] > 0 ? 'failed' : 'completed',
+            'completed_at' => ! empty($run['completed_at']) ? $run['completed_at'] : date('Y-m-d H:i:s'),
+            'summary_json' => $totals,
+        ]);
+
+        $reportId = $this->upsertReportRow([
+            'qa_run_id'    => $qaRunId,
+            'session_id'   => null,
+            'kind'         => 'final',
+            'product_name' => $run['product_name'] ?? 'unknown',
+            'html_path'    => $htmlPath,
+            'json_path'    => $jsonPath,
+            'generated_at' => date('Y-m-d H:i:s'),
+        ], 'final', null, $qaRunId);
+
+        return [
+            'ok'        => true,
+            'id'        => $reportId,
+            'html'      => $htmlPath,
+            'json'      => $jsonPath,
+            'totals'    => $totals,
+            'written'   => $written,
+            'html_body' => $htmlBody,
+            'json_body' => $jsonBody,
+        ];
+    }
+
+    /**
+     * Build final report content without requiring disk (used when files are missing).
+     *
+     * @return array{ok: bool, error?: string, html_body?: string, json_body?: string, html?: string, json?: string}
+     */
+    public function materializeFinalReport(string $qaRunId): array
+    {
+        return $this->buildFinalReport($qaRunId);
+    }
+
+    /**
+     * @return array{ok: bool, error?: string, json?: array, totals?: array, run?: array}
+     */
+    private function buildFinalPayload(string $qaRunId): array
     {
         $run = (new RunsModel())->find($qaRunId);
         if (! $run) {
@@ -76,9 +143,6 @@ class ReportService
 
         $totals = $this->summarise($sessions, $results, $validations);
 
-        $dir = $this->runDir($run);
-        @mkdir($dir, 0775, true);
-
         $json = [
             'qa_run_id'    => $qaRunId,
             'run'          => $run,
@@ -91,29 +155,52 @@ class ReportService
             'generated_at' => gmdate('c'),
         ];
 
-        $jsonPath = $dir . '/consolidated.json';
-        $htmlPath = $dir . '/consolidated.html';
+        return ['ok' => true, 'json' => $json, 'totals' => $totals, 'run' => $run];
+    }
 
-        file_put_contents($jsonPath, json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        file_put_contents($htmlPath, $this->renderFinalHtml($json));
+    private function writeReportFiles(string $dir, string $jsonPath, string $jsonBody, string $htmlPath, string $htmlBody): bool
+    {
+        if (! is_dir($dir) && ! @mkdir($dir, 0775, true) && ! is_dir($dir)) {
+            log_message('error', 'ReportService: cannot create reports directory {dir}', ['dir' => $dir]);
 
-        (new RunsModel())->update($qaRunId, [
-            'status'       => $totals['failed'] > 0 ? 'failed' : 'completed',
-            'completed_at' => date('Y-m-d H:i:s'),
-            'summary_json' => $totals,
-        ]);
+            return false;
+        }
 
-        $reportId = (new ReportsModel())->insert([
-            'qa_run_id'    => $qaRunId,
-            'session_id'   => null,
-            'kind'         => 'final',
-            'product_name' => $run['product_name'] ?? 'unknown',
-            'html_path'    => $htmlPath,
-            'json_path'    => $jsonPath,
-            'generated_at' => date('Y-m-d H:i:s'),
-        ], true);
+        $jsonOk = @file_put_contents($jsonPath, $jsonBody) !== false;
+        $htmlOk = @file_put_contents($htmlPath, $htmlBody) !== false;
 
-        return ['ok' => true, 'id' => $reportId, 'html' => $htmlPath, 'json' => $jsonPath, 'totals' => $totals];
+        if (! $jsonOk || ! $htmlOk) {
+            log_message('error', 'ReportService: failed writing report files under {dir}', ['dir' => $dir]);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function upsertReportRow(array $row, string $kind, ?int $sessionId = null, ?string $qaRunId = null): int|string
+    {
+        $reports = new ReportsModel();
+
+        if ($kind === 'session' && $sessionId !== null) {
+            $existing = $reports->where('session_id', $sessionId)->where('kind', 'session')
+                ->orderBy('generated_at', 'DESC')->first();
+        } else {
+            $existing = $reports->where('qa_run_id', $qaRunId ?? $row['qa_run_id'])
+                ->where('kind', 'final')
+                ->orderBy('generated_at', 'DESC')->first();
+        }
+
+        if ($existing) {
+            $reports->update($existing['id'], $row);
+
+            return $existing['id'];
+        }
+
+        return $reports->insert($row, true);
     }
 
     private function summarise(array $sessions, array $results, array $validations): array
@@ -194,11 +281,23 @@ class ReportService
 
     public function reportsRoot(): string
     {
-        $dir = (string) env('QA_REPORTS_DIR', __DIR__ . '/../../../qa-reports');
-        if (! str_starts_with($dir, '/') && !preg_match('#^[A-Z]:\\\\#i', $dir)) {
-            $dir = realpath(__DIR__ . '/../../') . DIRECTORY_SEPARATOR . $dir;
+        $dir = trim((string) env('QA_REPORTS_DIR', ''));
+        if ($dir === '') {
+            $dir = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'qa-reports';
         }
-        return rtrim($dir, '/\\');
+
+        $isAbsolute = str_starts_with($dir, '/') || (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $dir);
+        if (! $isAbsolute) {
+            $base = dirname(__DIR__, 2); // server-php/
+            $dir  = $base . DIRECTORY_SEPARATOR . $dir;
+        }
+
+        $resolved = realpath($dir);
+        if ($resolved !== false) {
+            return $resolved;
+        }
+
+        return rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $dir), '/\\');
     }
 
     private function renderSessionHtml(array $json): string

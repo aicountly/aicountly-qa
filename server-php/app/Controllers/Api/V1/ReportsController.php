@@ -48,43 +48,85 @@ class ReportsController extends BaseApiController
     {
         $row = (new ReportsModel())->where('session_id', $sessionId)->where('kind', 'session')
             ->orderBy('generated_at', 'DESC')->first();
-        if (! $row) {
-            return $this->fail('Session report not yet generated.', 404);
-        }
-        Services::auditService()->log('report_viewed', [
-            'qa_run_id'    => $row['qa_run_id'] ?? null,
-            'session_id'   => $sessionId,
-            'subject_kind' => 'report',
-            'subject_id'   => $row['id'],
-            'metadata'     => ['kind' => $kind, 'scope' => 'session'],
-        ]);
-        $path = $kind === 'html' ? ($row['html_path'] ?? '') : ($row['json_path'] ?? '');
-        if ($path === '' || ! is_file($path)) {
-            return $this->fail('Report file missing on disk.', 410);
-        }
-        $mime = $kind === 'html' ? 'text/html' : 'application/json';
 
-        return $this->response->setHeader('Content-Type', $mime)->setBody((string) file_get_contents($path));
+        $path = $row ? (($kind === 'html' ? ($row['html_path'] ?? '') : ($row['json_path'] ?? ''))) : '';
+
+        if ($path === '' || ! is_file($path)) {
+            $built = Services::reportService()->buildSessionReport($sessionId);
+            if (! ($built['ok'] ?? false)) {
+                return $this->fail($built['error'] ?? 'Session report not yet generated.', 404);
+            }
+
+            $path = $kind === 'html' ? (string) ($built['html'] ?? '') : (string) ($built['json'] ?? '');
+            if ($path === '' || ! is_file($path)) {
+                $body = $kind === 'html' ? ($built['html_body'] ?? null) : ($built['json_body'] ?? null);
+                if (is_string($body) && $body !== '') {
+                    $this->auditReportView($built['id'] ?? null, $built['qa_run_id'] ?? ($row['qa_run_id'] ?? null), $sessionId, $kind, 'session');
+
+                    return $this->streamReport($kind, $body);
+                }
+
+                return $this->fail('Report file missing on disk and could not be written. Check QA_REPORTS_DIR permissions.', 410);
+            }
+
+            $row = (new ReportsModel())->where('session_id', $sessionId)->where('kind', 'session')
+                ->orderBy('generated_at', 'DESC')->first();
+        }
+
+        $this->auditReportView($row['id'] ?? null, $row['qa_run_id'] ?? null, $sessionId, $kind, 'session');
+
+        return $this->streamReport($kind, (string) file_get_contents($path));
     }
 
     private function serve(string $qaRunId, string $kind)
     {
         $row = (new ReportsModel())->where('qa_run_id', $qaRunId)->where('kind', 'final')
             ->orderBy('generated_at', 'DESC')->first();
-        if (! $row) {
-            return $this->fail('Final report not yet generated for this run.', 404);
+
+        $path = $row ? (($kind === 'html' ? ($row['html_path'] ?? '') : ($row['json_path'] ?? ''))) : '';
+
+        if ($path === '' || ! is_file($path)) {
+            $built = Services::reportService()->materializeFinalReport($qaRunId);
+            if (! ($built['ok'] ?? false)) {
+                return $this->fail($built['error'] ?? 'Final report not yet generated for this run.', 404);
+            }
+
+            $path = $kind === 'html' ? (string) ($built['html'] ?? '') : (string) ($built['json'] ?? '');
+            if ($path === '' || ! is_file($path)) {
+                $body = $kind === 'html' ? ($built['html_body'] ?? null) : ($built['json_body'] ?? null);
+                if (is_string($body) && $body !== '') {
+                    $this->auditReportView($built['id'] ?? null, $qaRunId, null, $kind, 'final');
+
+                    return $this->streamReport($kind, $body);
+                }
+
+                return $this->fail('Report file missing on disk and could not be written. Check QA_REPORTS_DIR permissions.', 410);
+            }
+
+            $row = (new ReportsModel())->where('qa_run_id', $qaRunId)->where('kind', 'final')
+                ->orderBy('generated_at', 'DESC')->first();
         }
+
+        $this->auditReportView($row['id'] ?? null, $qaRunId, null, $kind, 'final');
+
+        return $this->streamReport($kind, (string) file_get_contents($path));
+    }
+
+    private function streamReport(string $kind, string $body)
+    {
+        $mime = $kind === 'html' ? 'text/html; charset=UTF-8' : 'application/json; charset=UTF-8';
+
+        return $this->response->setHeader('Content-Type', $mime)->setBody($body);
+    }
+
+    private function auditReportView(mixed $reportId, mixed $qaRunId, ?int $sessionId, string $kind, string $scope): void
+    {
         Services::auditService()->log('report_viewed', [
             'qa_run_id'    => $qaRunId,
+            'session_id'   => $sessionId,
             'subject_kind' => 'report',
-            'subject_id'   => $row['id'],
-            'metadata'     => ['kind' => $kind],
+            'subject_id'   => $reportId,
+            'metadata'     => ['kind' => $kind, 'scope' => $scope],
         ]);
-        $path = $kind === 'html' ? $row['html_path'] : $row['json_path'];
-        if (! is_file($path)) {
-            return $this->fail('Report file missing on disk.', 410);
-        }
-        $mime = $kind === 'html' ? 'text/html' : 'application/json';
-        return $this->response->setHeader('Content-Type', $mime)->setBody((string) file_get_contents($path));
     }
 }
