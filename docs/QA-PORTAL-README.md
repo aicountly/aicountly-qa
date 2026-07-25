@@ -20,7 +20,7 @@ React SPA  ───jwt──►  CI4.6 API  ───►  PostgreSQL
 
 Three independent processes:
 
-- **web/** — React 19 SPA, served from GitHub Pages (preview) and cPanel `public_html/` (prod).
+- **web/** — React 19 SPA, served from cPanel `public_html/`.
 - **server-php/** — CodeIgniter 4.6 REST API at `/api`, served from cPanel `public_html/api/`.
 - **worker.apis.aicountly.com/** — Playwright worker in the [apis-aicountly](https://github.com/aicountly/apis-aicountly) repo (`/home/apisaicountly/public_html/worker.apis.aicountly.com`).
 
@@ -216,7 +216,6 @@ Other Books templates ship as JSON only; running them requires no additional cod
 
 ## CI / CD
 
-- `.github/workflows/deploy-github-pages.yml` — preview frontend
 - `.github/workflows/deploy-prod-cpanel.yml` — frontend → `public_html/`, API → `public_html/api/`
 
 The worker host is independent — deploy from **apis-aicountly** (`worker.apis.aicountly.com/`) via SSH + PM2 on the apisaicountly server.

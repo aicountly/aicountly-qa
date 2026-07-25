@@ -38,6 +38,59 @@ class SessionsController extends ResourceController
     }
 
     /**
+     * Re-queue a finished session so the worker can run it again.
+     * Clears prior results, validations, live-log events, session reports, and evidence files.
+     */
+    public function rerun($id = null)
+    {
+        $sessionId = (int) $id;
+        try {
+            $prepared = $this->model->prepareRerun($sessionId);
+        } catch (\RuntimeException $e) {
+            $code = (int) $e->getCode();
+            if (! in_array($code, [400, 404, 409, 500], true)) {
+                $code = 400;
+            }
+            if ($code === 404) {
+                return $this->failNotFound($e->getMessage());
+            }
+
+            return $this->fail($e->getMessage(), $code);
+        }
+
+        $session = $prepared['session'];
+        $this->clearSessionEvidenceFiles($session);
+
+        Services::auditService()->log('session_rerun', [
+            'qa_run_id'    => $session['qa_run_id'],
+            'session_id'   => $sessionId,
+            'subject_kind' => 'session',
+            'subject_id'   => $sessionId,
+            'metadata'     => [
+                'previous_status' => $prepared['previous_status'],
+                'name'            => $session['name'] ?? null,
+            ],
+        ]);
+
+        try {
+            (new SessionEventsModel())->record(
+                $sessionId,
+                (string) $session['qa_run_id'],
+                'rerun',
+                'Session re-queued for another run (was ' . $prepared['previous_status'] . ').',
+                ['metadata' => ['previous_status' => $prepared['previous_status']]]
+            );
+        } catch (\Throwable $e) {
+            // Events table optional.
+        }
+
+        return $this->respond([
+            'ok'   => true,
+            'data' => $session,
+        ]);
+    }
+
+    /**
      * Live activity feed for a session (log lines + screenshots).
      */
     public function live($id = null)
@@ -246,6 +299,58 @@ class SessionsController extends ResourceController
         }
 
         return $files;
+    }
+
+    /** Delete prior screenshots/reports under session-* folders for a clean re-run. */
+    private function clearSessionEvidenceFiles(array $session): void
+    {
+        foreach ($this->evidenceDirs($session) as $dir) {
+            $this->deleteTree($dir);
+        }
+
+        // Also remove final report files at run root if present.
+        $run = (new RunsModel())->find($session['qa_run_id'] ?? '');
+        if (! $run) {
+            return;
+        }
+        $product = $run['product_name'] ?? 'unknown';
+        $day     = substr((string) $session['qa_run_id'], 7, 8);
+        $date    = $day !== ''
+            ? substr($day, 0, 4) . '-' . substr($day, 4, 2) . '-' . substr($day, 6, 2)
+            : gmdate('Y-m-d');
+        $base = Services::reportService()->reportsRoot()
+            . '/' . $product . '/' . $date . '/' . $session['qa_run_id'];
+        foreach (['report.html', 'report.json', 'final-report.html', 'final-report.json'] as $name) {
+            $path = $base . '/' . $name;
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+    }
+
+    private function deleteTree(string $path): void
+    {
+        if (! is_dir($path)) {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+
+            return;
+        }
+
+        $items = scandir($path) ?: [];
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $full = $path . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($full)) {
+                $this->deleteTree($full);
+            } else {
+                @unlink($full);
+            }
+        }
+        @rmdir($path);
     }
 
     /** @return list<string> */

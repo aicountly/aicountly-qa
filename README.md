@@ -44,7 +44,7 @@ server-php/               CodeIgniter 4.6 API
 worker/                   Pointer → apis-aicountly/worker.apis.aicountly.com
 docs/                     Setup + architecture
 qa-reports/               Generated reports (gitignored)
-.github/                  Deploy workflows (GitHub Pages + cPanel)
+.github/                  Deploy workflow (cPanel)
 ```
 
 ## Quick start (local dev)
@@ -98,9 +98,8 @@ Production: `/home/apisaicountly/public_html/worker.apis.aicountly.com` on **wor
 
 ## Production deployment
 
-- **Frontend & API** ride the existing workflows under `.github/workflows/`:
-  - `deploy-github-pages.yml` for the preview frontend
-  - `deploy-prod-cpanel.yml` ships `web/dist` → `public_html/` and `server-php/` → `public_html/api/`
+- **Frontend & API** deploy via `.github/workflows/deploy-prod-cpanel.yml` (manual):
+  - ships `web/dist` → `public_html/` and `server-php/` → `public_html/api/`
 - **Worker** runs on **worker.apis.aicountly.com** ([apis-aicountly](https://github.com/aicountly/apis-aicountly) repo). Long-lived Node + Playwright; polls `qa.aicountly.org/api` only.
 
 See [docs/QA-PORTAL-README.md](docs/QA-PORTAL-README.md) for the full setup, runtime architecture, naming conventions, and how to add more session templates.

@@ -20,6 +20,7 @@ export default function SessionPlanDetail() {
   const qc = useQueryClient()
   const { hasRole } = useAuth()
   const canApprove = hasRole(['Owner', 'QA Manager'])
+  const canRerun = canApprove
   const [liveSession, setLiveSession] = useState(null)
   const [sessions, setSessions] = useState([])
 
@@ -65,6 +66,24 @@ export default function SessionPlanDetail() {
       qc.invalidateQueries({ queryKey: ['session-plans'] })
     },
   })
+
+  const rerun = useMutation({
+    mutationFn: async (sessionId) => api.post(v1(`/sessions/${sessionId}/rerun`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sessions-for-plan', plan?.qa_run_id] })
+      qc.invalidateQueries({ queryKey: ['run', plan?.qa_run_id] })
+      qc.invalidateQueries({ queryKey: ['runs'] })
+    },
+  })
+
+  function handleRerun(exec) {
+    if (!exec?.id) return
+    const ok = window.confirm(
+      `Re-run “${exec.name || 'this session'}”?\n\nPrior results, screenshots, and the live log for this session will be cleared, then the worker will pick it up again.`,
+    )
+    if (!ok) return
+    rerun.mutate(exec.id)
+  }
 
   function move(idx, dir) {
     const next = [...sessions]
@@ -163,6 +182,7 @@ export default function SessionPlanDetail() {
                 const exec = findExec(s)
                 const canViewLog = !!exec
                 const showLive = !!exec && ['queued', 'claimed', 'running'].includes(exec.status)
+                const canRerunRow = canRerun && !!exec && ['completed', 'failed', 'skipped', 'partial', 'blocked_by_safe_guard'].includes(exec.status)
                 return (
                   <tr key={`${plan.id}-${i}`}>
                     <td>{s.order_index ?? i + 1}</td>
@@ -192,6 +212,16 @@ export default function SessionPlanDetail() {
                           onClick={() => setLiveSession({ id: exec.id, name: exec.name || s.name })}
                         >
                           View log
+                        </button>
+                      )}
+                      {canRerunRow && (
+                        <button
+                          type="button"
+                          className="font-medium text-amber-800 hover:underline disabled:opacity-50"
+                          disabled={rerun.isPending}
+                          onClick={() => handleRerun(exec)}
+                        >
+                          {rerun.isPending && rerun.variables === exec.id ? 'Re-queuing…' : 'Re-run'}
                         </button>
                       )}
                       {plan.status === 'draft' && (

@@ -86,6 +86,7 @@ $routes->group('v1', static function ($routes) {
         // cPanel/nginx static-file rules before CodeIgniter runs.
         $routes->get('sessions/(:num)/evidence', 'Api\\V1\\SessionsController::evidence/$1');
         $routes->get('sessions/(:num)/evidence/(:segment)', 'Api\\V1\\SessionsController::evidence/$1/$2');
+        $routes->post('sessions/(:num)/rerun', 'Api\\V1\\SessionsController::rerun/$1', ['filter' => 'role:Owner,QA Manager']);
         $routes->resource('sessions', ['controller' => 'Api\\V1\\SessionsController']);
 
         $routes->resource('test-data-packs', ['controller' => 'Api\\V1\\TestDataPacksController']);

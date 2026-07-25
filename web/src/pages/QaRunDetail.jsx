@@ -56,6 +56,7 @@ export default function QaRunDetail() {
   const qc = useQueryClient()
   const { hasRole } = useAuth()
   const canDelete = hasRole(['Owner'])
+  const canRerun = hasRole(['Owner', 'QA Manager'])
   const [liveSession, setLiveSession] = useState(null)
 
   const run = useQuery({
@@ -104,11 +105,30 @@ export default function QaRunDetail() {
     },
   })
 
+  const rerun = useMutation({
+    mutationFn: async (sessionId) => api.post(v1(`/sessions/${sessionId}/rerun`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', id] })
+      qc.invalidateQueries({ queryKey: ['runs'] })
+      qc.invalidateQueries({ queryKey: ['validation', id] })
+      qc.invalidateQueries({ queryKey: ['reports', id] })
+      qc.invalidateQueries({ queryKey: ['sessions-for-plan'] })
+    },
+  })
+
   function handleDelete() {
     if (!window.confirm(`Delete QA run "${id}"? This removes its sessions and plans.`)) {
       return
     }
     remove.mutate()
+  }
+
+  function handleRerun(session) {
+    const ok = window.confirm(
+      `Re-run “${session.name || 'this session'}”?\n\nPrior results, screenshots, and the live log for this session will be cleared, then the worker will pick it up again.`,
+    )
+    if (!ok) return
+    rerun.mutate(session.id)
   }
 
   if (run.isLoading) return <div className="text-sm text-neutral-500">Loading…</div>
@@ -229,6 +249,7 @@ export default function QaRunDetail() {
               const sum = s.result_summary
               const canOpenReport = sum?.has_report
               const showLive = ['queued', 'claimed', 'running'].includes(s.status)
+              const canRerunRow = canRerun && ['completed', 'failed', 'skipped', 'partial', 'blocked_by_safe_guard'].includes(s.status)
               return (
                 <tr key={s.id} id={`s-${s.id}`}>
                   <td>{s.order_index}</td>
@@ -254,7 +275,7 @@ export default function QaRunDetail() {
                   </td>
                   <td className="text-xs whitespace-nowrap">{fmtDate(s.started_at)}</td>
                   <td className="text-xs whitespace-nowrap">{fmtDate(s.completed_at)}</td>
-                  <td className="text-right whitespace-nowrap">
+                  <td className="space-x-2 text-right whitespace-nowrap">
                     <button
                       type="button"
                       className={`text-xs font-medium hover:underline ${showLive ? 'text-aicountly-700' : 'text-neutral-600'}`}
@@ -262,6 +283,16 @@ export default function QaRunDetail() {
                     >
                       View log
                     </button>
+                    {canRerunRow && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-amber-800 hover:underline disabled:opacity-50"
+                        disabled={rerun.isPending}
+                        onClick={() => handleRerun(s)}
+                      >
+                        {rerun.isPending && rerun.variables === s.id ? 'Re-queuing…' : 'Re-run'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               )

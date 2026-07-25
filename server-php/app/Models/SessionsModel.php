@@ -240,4 +240,77 @@ class SessionsModel extends Model
              AND claimed_at < (CURRENT_TIMESTAMP - INTERVAL '{$minutes} minutes')"
         );
     }
+
+    /** Statuses that may be manually re-queued for another worker attempt. */
+    public const RERUNNABLE = ['completed', 'failed', 'skipped', 'partial', 'blocked_by_safe_guard'];
+
+    /**
+     * Reset a finished session to queued and clear prior result artifacts.
+     *
+     * @return array{session: array, previous_status: string}
+     */
+    public function prepareRerun(int $sessionId): array
+    {
+        $session = $this->find($sessionId);
+        if (! $session) {
+            throw new \RuntimeException('Session not found.', 404);
+        }
+
+        $status = (string) ($session['status'] ?? '');
+        if (in_array($status, ['queued', 'claimed', 'running'], true)) {
+            throw new \RuntimeException('Session is already queued or in progress.', 409);
+        }
+        if (! in_array($status, self::RERUNNABLE, true)) {
+            throw new \RuntimeException('Session status "' . $status . '" cannot be re-run.', 400);
+        }
+
+        $qaRunId = (string) $session['qa_run_id'];
+        $db      = $this->db;
+        $db->transStart();
+
+        $db->table('qa_session_results')->where('session_id', $sessionId)->delete();
+        $db->table('qa_validation_results')->where('session_id', $sessionId)->delete();
+        try {
+            $db->table('qa_session_events')->where('session_id', $sessionId)->delete();
+        } catch (\Throwable $e) {
+            // Table may not exist yet on older deploys.
+        }
+        $db->table('qa_reports')->where('session_id', $sessionId)->where('kind', 'session')->delete();
+        // Invalidate consolidated final report so it rebuilds when the run finishes again.
+        $db->table('qa_reports')->where('qa_run_id', $qaRunId)->where('kind', 'final')->delete();
+
+        // Use query builder so NULL timestamps/claim fields are written (Model may skip nulls).
+        $db->table('qa_sessions')->where('id', $sessionId)->update([
+            'status'             => 'queued',
+            'claimed_by_worker'  => null,
+            'claimed_at'         => null,
+            'started_at'         => null,
+            'completed_at'       => null,
+            'last_heartbeat_at'  => null,
+            'updated_at'         => date('Y-m-d H:i:s'),
+        ]);
+
+        $run = $db->table('qa_runs')->where('qa_run_id', $qaRunId)->get()->getRowArray();
+        if ($run) {
+            $db->table('qa_runs')->where('qa_run_id', $qaRunId)->update([
+                'status'       => 'running',
+                'completed_at' => null,
+                'summary_json' => null,
+                'started_at'   => $run['started_at'] ?? date('Y-m-d H:i:s'),
+                'updated_at'   => date('Y-m-d H:i:s'),
+            ]);
+        }
+
+        $db->transComplete();
+        if (! $db->transStatus()) {
+            throw new \RuntimeException('Failed to re-queue session.', 500);
+        }
+
+        $fresh = $this->find($sessionId);
+        if (! $fresh) {
+            throw new \RuntimeException('Session not found after re-queue.', 500);
+        }
+
+        return ['session' => $fresh, 'previous_status' => $status];
+    }
 }
