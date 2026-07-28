@@ -269,7 +269,8 @@ class SessionsController extends ResourceController
                 'filename'   => $name,
                 'kind'       => 'screenshot',
                 'url'        => '/v1/sessions/' . (int) $session['id'] . '/evidence?filename=' . rawurlencode($name),
-                'created_at' => date('Y-m-d H:i:s', (int) @filemtime($file)),
+                // ISO-8601 UTC so the portal can render Asia/Kolkata correctly.
+                'created_at' => gmdate('c', (int) @filemtime($file)),
             ];
         }
 

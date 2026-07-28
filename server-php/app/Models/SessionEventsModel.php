@@ -80,7 +80,7 @@ class SessionEventsModel extends Model
             'step_index'  => isset($extra['step_index']) ? (int) $extra['step_index'] : null,
             'total_steps' => isset($extra['total_steps']) ? (int) $extra['total_steps'] : null,
             'metadata'    => $extra['metadata'] ?? null,
-            'created_at'  => date('Y-m-d H:i:s'),
+            'created_at'  => gmdate('Y-m-d H:i:s'),
         ]);
     }
 }
