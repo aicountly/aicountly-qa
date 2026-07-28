@@ -13,6 +13,7 @@ import SessionPlans from './pages/SessionPlans.jsx'
 import SessionPlanDetail from './pages/SessionPlanDetail.jsx'
 import QaRuns from './pages/QaRuns.jsx'
 import QaRunDetail from './pages/QaRunDetail.jsx'
+import SessionLiveLogPage from './pages/SessionLiveLogPage.jsx'
 import ErrorRegister from './pages/ErrorRegister.jsx'
 import QaReports from './pages/QaReports.jsx'
 import TestDataPacks from './pages/TestDataPacks.jsx'
@@ -66,6 +67,7 @@ export default function App() {
       <Route path="/new-qa-run"       element={<Authed roles={['Owner', 'QA Manager']}><NewQaRun /></Authed>} />
       <Route path="/qa-runs"          element={<Authed><QaRuns /></Authed>} />
       <Route path="/qa-runs/:id"      element={<Authed><QaRunDetail /></Authed>} />
+      <Route path="/sessions/:sessionId/log" element={<Authed><SessionLiveLogPage /></Authed>} />
       <Route path="/session-plans"    element={<Authed><SessionPlans /></Authed>} />
       <Route path="/session-plans/:id" element={<Authed><SessionPlanDetail /></Authed>} />
       <Route path="/error-register"   element={<Authed><ErrorRegister /></Authed>} />

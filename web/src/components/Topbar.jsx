@@ -19,7 +19,9 @@ const titles = {
 export default function Topbar() {
   const { pathname } = useLocation()
   const { user } = useAuth()
-  const title = titles[pathname] || titles[Object.keys(titles).find((k) => k !== '/' && pathname.startsWith(k))] || 'AICOUNTLY QA'
+  const title = pathname.match(/^\/sessions\/\d+\/log/)
+    ? 'Session log'
+    : titles[pathname] || titles[Object.keys(titles).find((k) => k !== '/' && pathname.startsWith(k))] || 'AICOUNTLY QA'
 
   return (
     <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-neutral-200 bg-white/95 px-4 backdrop-blur sm:px-6">

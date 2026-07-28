@@ -1,9 +1,7 @@
-import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
 import { EnvBadge, SeverityBadge, StatusBadge } from '../components/Badges.jsx'
-import SessionLiveLog from '../components/SessionLiveLog.jsx'
 import { fmtDate } from '../lib/format.js'
 import { useAuth } from '../lib/auth.jsx'
 
@@ -57,7 +55,6 @@ export default function QaRunDetail() {
   const { hasRole } = useAuth()
   const canDelete = hasRole(['Owner'])
   const canRerun = hasRole(['Owner', 'QA Manager'])
-  const [liveSession, setLiveSession] = useState(null)
 
   const run = useQuery({
     queryKey: ['run', id],
@@ -278,13 +275,12 @@ export default function QaRunDetail() {
                   <td className="text-xs whitespace-nowrap">{fmtDate(s.started_at)}</td>
                   <td className="text-xs whitespace-nowrap">{fmtDate(s.completed_at)}</td>
                   <td className="space-x-2 text-right whitespace-nowrap">
-                    <button
-                      type="button"
+                    <Link
+                      to={`/sessions/${s.id}/log?name=${encodeURIComponent(s.name || '')}&from=${encodeURIComponent(`/qa-runs/${id}`)}&fromLabel=${encodeURIComponent('QA run')}`}
                       className={`text-xs font-medium hover:underline ${showLive ? 'text-aicountly-700' : 'text-neutral-600'}`}
-                      onClick={() => setLiveSession({ id: s.id, name: s.name })}
                     >
                       View log
-                    </button>
+                    </Link>
                     {canRerunRow && (
                       <button
                         type="button"
@@ -305,14 +301,6 @@ export default function QaRunDetail() {
           </tbody>
         </table>
       </div>
-
-      {liveSession && (
-        <SessionLiveLog
-          sessionId={liveSession.id}
-          sessionName={liveSession.name}
-          onClose={() => setLiveSession(null)}
-        />
-      )}
 
       <div className="qa-card">
         <h2 className="mb-2 text-sm font-semibold text-neutral-900">Validation Results</h2>

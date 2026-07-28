@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, v1 } from '../lib/api.js'
 import { SeverityBadge, StatusBadge } from '../components/Badges.jsx'
-import SessionLiveLog from '../components/SessionLiveLog.jsx'
 import { useAuth } from '../lib/auth.jsx'
 import { fmtDate } from '../lib/format.js'
 
@@ -21,7 +20,6 @@ export default function SessionPlanDetail() {
   const { hasRole } = useAuth()
   const canApprove = hasRole(['Owner', 'QA Manager'])
   const canRerun = canApprove
-  const [liveSession, setLiveSession] = useState(null)
   const [sessions, setSessions] = useState([])
 
   const planQ = useQuery({
@@ -206,13 +204,12 @@ export default function SessionPlanDetail() {
                     </td>
                     <td className="space-x-2 whitespace-nowrap text-right text-xs">
                       {canViewLog && (
-                        <button
-                          type="button"
+                        <Link
+                          to={`/sessions/${exec.id}/log?name=${encodeURIComponent(exec.name || s.name || '')}&from=${encodeURIComponent(`/session-plans/${id}`)}&fromLabel=${encodeURIComponent('Session plan')}`}
                           className={`font-medium hover:underline ${showLive ? 'text-aicountly-700' : 'text-neutral-600'}`}
-                          onClick={() => setLiveSession({ id: exec.id, name: exec.name || s.name })}
                         >
                           View log
-                        </button>
+                        </Link>
                       )}
                       {canRerunRow && (
                         <button
@@ -242,14 +239,6 @@ export default function SessionPlanDetail() {
           </table>
         </div>
       </div>
-
-      {liveSession && (
-        <SessionLiveLog
-          sessionId={liveSession.id}
-          sessionName={liveSession.name}
-          onClose={() => setLiveSession(null)}
-        />
-      )}
     </div>
   )
 }
