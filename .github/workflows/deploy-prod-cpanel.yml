@@ -5,6 +5,8 @@ name: Deploy to cPanel via SSH (manual Production)
 #          PROD_SSH_PRIVATE_KEY (+ optional PROD_SSH_PRIVATE_KEY_B64),
 #          VITE_API_URL, VITE_APP_NAME.
 # Database + API secrets: configure in api/.env on the server (not GitHub Secrets).
+# Worker: rsynced to ~/aicountly-qa-worker (sibling of public_html), PM2 name aicountly-qa-worker.
+# Worker .env (QA_WORKER_TOKEN, QA_API_URL, QA_REPORTS_DIR) is created once on the server — never from GitHub.
 on:
   workflow_dispatch:
 
@@ -18,7 +20,10 @@ env:
   PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
   # PROD_REMOTE_ROOT → cPanel document root (e.g. /home/qaaicountly/public_html)
   PROD_REMOTE_ROOT: ${{ secrets.PROD_REMOTE_ROOT }}
+  # Dedicated QA worker path (outside document root). Override with secret if needed.
+  PROD_WORKER_ROOT: ${{ secrets.PROD_WORKER_ROOT }}
   SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
+  QA_WORKER_PM2_NAME: aicountly-qa-worker
 
 jobs:
   deploy:
@@ -61,6 +66,32 @@ jobs:
         run: |
           test -d web/dist || (echo "web/dist missing — build failed" && exit 1)
           echo "Build ready: $(find web/dist -type f | wc -l) files in web/dist"
+
+      - name: Setup Node for worker
+        if: hashFiles('worker/package-lock.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Setup Node for worker (no lockfile)
+        if: hashFiles('worker/package-lock.json') == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install worker dependencies
+        working-directory: worker
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Build worker (TypeScript → dist/)
+        working-directory: worker
+        run: |
+          npm run build
+          test -f dist/index.js || (echo "worker/dist/index.js missing" && exit 1)
+          echo "Worker build ready: $(find dist -type f | wc -l) files"
 
       - name: Verify server-php exists
         run: |
@@ -128,9 +159,21 @@ jobs:
       - name: Prepare remote directories
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
+          REPORTS_ROOT="${HOME_ROOT}/qa-reports"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\" \"${REMOTE_ROOT}/api/writable/uploads\""
+            "mkdir -p \
+              \"${REMOTE_ROOT}/api/writable/cache\" \
+              \"${REMOTE_ROOT}/api/writable/logs\" \
+              \"${REMOTE_ROOT}/api/writable/session\" \
+              \"${REMOTE_ROOT}/api/writable/uploads\" \
+              \"${WORKER_ROOT}\" \
+              \"${WORKER_ROOT}/fixtures\" \
+              \"${REPORTS_ROOT}\" && \
+             echo \"Remote paths OK: api writable + worker=${WORKER_ROOT} + reports=${REPORTS_ROOT}\""
 
       # server-php/ → PROD_REMOTE_ROOT/api/ via rsync over SSH
       - name: Rsync server-php to public_html/api
@@ -274,16 +317,107 @@ jobs:
 
           echo "Rsynced web/dist → ${REMOTE_ROOT} (api/ and php.ini preserved)"
 
+      # worker/ → ~/aicountly-qa-worker (NOT worker.apis.aicountly.com, NOT inside public_html)
+      - name: Rsync dedicated QA worker
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
+          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
+          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${WORKER_ROOT}/"
+
+          rsync -avz --delete \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            --exclude='playwright-report' \
+            --exclude='test-results' \
+            -e "$RSYNC_RSH" \
+            worker/ "$DEST"
+
+          echo "Rsynced worker/ → ${WORKER_ROOT} (PM2 name: ${QA_WORKER_PM2_NAME})"
+
+      - name: Verify server worker/.env
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          if ! "${SSH_CMD[@]}" "test -f \"${WORKER_ROOT}/.env\""; then
+            echo "::warning::Missing ${WORKER_ROOT}/.env — create once from .env.example before PM2 will stay up."
+            echo "Required: QA_API_URL=https://qa.aicountly.org/api"
+            echo "Required: QA_WORKER_TOKEN=<same as ${REMOTE_ROOT}/api/.env>"
+            echo "Required: QA_WORKER_ID=aicountly-qa-worker"
+            echo "Required: QA_REPORTS_DIR=${HOME_ROOT}/qa-reports"
+          else
+            echo "Worker .env present (values masked):"
+            "${SSH_CMD[@]}" "grep -E '^(QA_API_URL|QA_WORKER_ID|QA_REPORTS_DIR|QA_HEADLESS)=' \"${WORKER_ROOT}/.env\" | sed 's/=.*/=***/' || true"
+            "${SSH_CMD[@]}" "grep -E '^QA_WORKER_TOKEN=' \"${WORKER_ROOT}/.env\" | sed 's/=.*/=***/' || echo 'MISSING QA_WORKER_TOKEN'"
+          fi
+
+      - name: Install worker deps + Playwright Chromium on server
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
+            if ! command -v npm >/dev/null 2>&1; then \
+              echo '::error::npm not found on cPanel host — install Node 20+ once (see docs/QA-PORTAL-README.md)'; \
+              exit 1; \
+            fi && \
+            echo \"Node: \$(node -v) npm: \$(npm -v)\" && \
+            if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi && \
+            npx playwright install chromium || echo '::warning::playwright install chromium failed — run once as root: npx playwright install-deps chromium'"
+
+      - name: Restart dedicated PM2 worker (aicountly-qa-worker)
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
+            if ! command -v pm2 >/dev/null 2>&1; then \
+              echo '::warning::pm2 not found — install once: npm install -g pm2 && pm2 startup'; \
+              echo \"Then: cd ${WORKER_ROOT} && pm2 start ecosystem.config.cjs && pm2 save\"; \
+              exit 0; \
+            fi && \
+            if [ ! -f .env ]; then \
+              echo '::warning::Skipping PM2 restart — create ${WORKER_ROOT}/.env first'; \
+              exit 0; \
+            fi && \
+            if [ ! -f dist/index.js ]; then \
+              echo '::error::${WORKER_ROOT}/dist/index.js missing after rsync'; \
+              exit 1; \
+            fi && \
+            if pm2 describe ${QA_WORKER_PM2_NAME} >/dev/null 2>&1; then \
+              pm2 restart ${QA_WORKER_PM2_NAME} --update-env; \
+            else \
+              pm2 start ecosystem.config.cjs; \
+            fi && \
+            pm2 save && \
+            pm2 list | grep -E '${QA_WORKER_PM2_NAME}|name' || pm2 list"
+
       - name: Verify remote deploy
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "ls -la \"${REMOTE_ROOT}\" && ls -la \"${REMOTE_ROOT}/api/index.php\" 2>/dev/null || ls -la \"${REMOTE_ROOT}/api/\""
+            "ls -la \"${REMOTE_ROOT}\" && ls -la \"${REMOTE_ROOT}/api/index.php\" 2>/dev/null || ls -la \"${REMOTE_ROOT}/api/\" && \
+             echo '--- worker ---' && ls -la \"${WORKER_ROOT}/dist/index.js\" \"${WORKER_ROOT}/package.json\" \"${WORKER_ROOT}/ecosystem.config.cjs\" 2>&1"
 
       - name: Fix file permissions via SSH
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
+          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
+          WORKER_ROOT="${WORKER_ROOT%/}"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
             "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
@@ -291,4 +425,6 @@ jobs:
              find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && \
              chmod 600 \"${REMOTE_ROOT}/api/.env\" 2>/dev/null || true && \
              chmod -R 775 \"${REMOTE_ROOT}/api/writable\" 2>/dev/null || true && \
-             echo 'Permissions fixed' && echo 'Deploy complete: web/dist → public_html, server-php → public_html/api'"
+             chmod 600 \"${WORKER_ROOT}/.env\" 2>/dev/null || true && \
+             echo 'Permissions fixed' && \
+             echo 'Deploy complete: web → public_html, api → public_html/api, worker → ${WORKER_ROOT} (PM2 ${QA_WORKER_PM2_NAME})'"

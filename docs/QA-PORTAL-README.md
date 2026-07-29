@@ -14,17 +14,19 @@ Internal QA Testing Agent for approved AICOUNTLY target applications.
 React SPA  ───jwt──►  CI4.6 API  ───►  PostgreSQL
    ▲                     ▲                  ▲
    │                     │                  │
-   └─ qa-reports/ ◄──── Worker (Playwright) ─┘
+   └─ qa-reports/ ◄──── dedicated QA Worker (Playwright) ─┘
             (HTTPS X-Worker-Token)
 ```
 
-Three independent processes:
+Three independent processes (all owned by this repo / QA cPanel account):
 
 - **web/** — React 19 SPA, served from cPanel `public_html/`.
 - **server-php/** — CodeIgniter 4.6 REST API at `/api`, served from cPanel `public_html/api/`.
-- **worker.apis.aicountly.com/** — Playwright worker in the [apis-aicountly](https://github.com/aicountly/apis-aicountly) repo (`/home/apisaicountly/public_html/worker.apis.aicountly.com`).
+- **worker/** (`aicountly-qa-worker`) — dedicated Playwright worker on the QA cPanel host at `~/aicountly-qa-worker` (sibling of `public_html`). PM2 name **`aicountly-qa-worker`**. Not the shared `worker.apis.aicountly.com` process.
 
 Sessions execute strictly one at a time. The worker uses `SELECT … FOR UPDATE SKIP LOCKED` so even multiple workers (not used in MVP) never race on the same row.
+
+See [QA-WORKER.md](./QA-WORKER.md) for deploy path, PM2, and one-time AlmaLinux setup.
 
 ## Naming rules (strict)
 
@@ -107,25 +109,22 @@ npm run dev
 # Open http://localhost:5173 — sign in with the seeded owner.
 ```
 
-### 4. Worker host (worker.apis.aicountly.com)
-
-Clone the **apis-aicountly** repo and use the folder that matches the cPanel subdomain path:
+### 4. Dedicated QA worker (in this repo)
 
 ```bash
-git clone https://github.com/aicountly/apis-aicountly.git
-cd apis-aicountly/worker.apis.aicountly.com
+cd worker
 cp .env.example .env
-# QA_API_URL=https://qa.aicountly.org/api
-# QA_WORKER_TOKEN=<same value as server-php/.env on qa.aicountly.org>
-# QA_REPORTS_DIR=/home/apisaicountly/qa-reports
-# QA_WORKER_ID=worker.apis.aicountly.com
+# QA_API_URL=http://localhost:8080/api   # or https://qa.aicountly.org/api
+# QA_WORKER_TOKEN=<same value as server-php/.env>
+# QA_WORKER_ID=aicountly-qa-worker
+# QA_REPORTS_DIR=../qa-reports
 npm install
-npx playwright install-deps chromium   # AlmaLinux: once as root
 npx playwright install chromium
+npm run build
 npm start
 ```
 
-See [apis-aicountly/worker.apis.aicountly.com/README.md](https://github.com/aicountly/apis-aicountly/blob/main/worker.apis.aicountly.com/README.md) for PM2 and production notes.
+Production path on the **QA** cPanel account: `~/aicountly-qa-worker` with PM2 name **`aicountly-qa-worker`**. Deployed by the same cPanel GitHub Actions workflow as web + API. Full one-time WHM commands: [QA-WORKER.md](./QA-WORKER.md).
 
 The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` session, executes it end-to-end, then loops.
 
@@ -150,7 +149,7 @@ The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` sessio
 4. Reviewer (Owner / QA Manager) edits / reorders / removes sessions, then Approves.
 5. Each approved session is enqueued in qa_sessions with status=queued.
 6. Worker polls /worker/next-session → claims oldest queued session.
-7. Worker logs in through identity → Jump To Smart Books → password, runs steps, captures evidence, and posts the result. OTP/2FA or ambiguous/unsafe paths can pause as `awaiting_decision`.
+7. Worker logs in through identity → the claimed profile’s product-scoped Jump To → password, verifies the resulting host against profile `base_url` / `allowed_domains`, runs steps, captures evidence, and posts the result. OTP/2FA or ambiguous/unsafe paths can pause as `awaiting_decision`.
 8. API writes session report (HTML + JSON) under qa-reports/{product}/{date}/{qa_run_id}/.
 9. When no queued sessions remain, API builds the consolidated final report.
 10. Reports are surfaced in /qa-reports and /qa-runs/:id in the UI.
@@ -183,7 +182,9 @@ Both worker and API write under the same root (`QA_REPORTS_DIR`). The folder is 
 3. (Optional) Add a test data pack and expected results seeder under `server-php/app/Database/Seeds/`.
 4. (Optional) Add product-specific validation rules via `ValidationRulesSeeder`.
 
-The external runner consumes templates declaratively, but must be upgraded in `apis-aicountly` for every newly declared step kind. Current additions are `expect_login_outcome` for login-error capture and the Books File I/O kinds `ask_decision`, `file_import`, `expect_import_result`, `file_export`, `compare_file_roundtrip`, `file_upload_expect_rejected`, and `assert_file_upload_blocked`.
+The in-repo worker (`worker/`) consumes templates declaratively. Upgrade `worker/runner/stepRunner.ts` (and related modules) when adding new step kinds. Supported additions include `expect_login_outcome`, `expect_product_host` (`AUTH_PRODUCT_HOST_MATCH`), `ask_decision`, and Books File I/O kinds (`file_import`, `expect_import_result`, `file_export`, `compare_file_roundtrip`, `file_upload_expect_rejected`, `assert_file_upload_blocked`).
+
+Claimed jobs include an additive `runtime_contract`: ordered Jump To candidates derived from `product_name`, plus the expected base URL, allowed domains, one-recovery policy, and `AUTH_PRODUCT_HOST_MATCH` validation code. Candidate order must win over dropdown order. A mismatch that remains after one direct navigation is a critical QA error; the worker attaches the landed URL, selected Jump To, expected/actual hosts, and screenshot instead of scanning the wrong product.
 
 ## Mid-run operator decisions
 
@@ -196,9 +197,9 @@ The QA decision routes are:
 - Worker token: `POST /v1/worker/decisions`, `GET /v1/worker/decisions/{id}`, `POST /v1/worker/decisions/{id}/timeout`, `GET /v1/worker/decision-memory`.
 - Owner/QA Manager JWT: `GET /v1/runs/{qaRunId}/decisions`, `POST /v1/runs/{qaRunId}/decisions/{id}/answer`, `GET /v1/runs/{qaRunId}/decisions/{id}/screenshot`.
 
-## Shared worker host regression
+## Portal isolation checklist
 
-If `SMOKE_*` configuration or a smoke process is added to the shared worker host, verify both portals remain isolated by API URL/token, process name, poll loop, and report root. Then run the multi-portal checklist: QA Jump To login, Live Log heartbeat/progress, evidence upload, decision pause/answer/resume, Books sandbox File I/O, production upload refusal, and one smoke job. Restart each process independently and confirm neither claims the other portal’s jobs.
+QA and smoke must remain isolated by API URL/token, process name (`aicountly-qa-worker` vs smoke’s PM2 name), poll loop, report root, and product-specific Jump To. Checklist after deploy: QA Jump To login, deliberate wrong-product host failure with evidence, Live Log heartbeat/progress, evidence upload, decision pause/answer/resume, Books sandbox File I/O, production upload refusal. Restart each portal’s worker independently and confirm neither claims the other portal’s jobs.
 
 ## Books — fully wired end-to-end session (proof point)
 
@@ -231,6 +232,9 @@ Other Books templates ship as JSON only; running them requires no additional cod
 
 ## CI / CD
 
-- `.github/workflows/deploy-prod-cpanel.yml` — frontend → `public_html/`, API → `public_html/api/`
+- `.github/workflows/deploy-prod-cpanel.yml` (manual) deploys:
+  - `web/dist` → `public_html/`
+  - `server-php/` → `public_html/api/`
+  - `worker/` → `~/aicountly-qa-worker` and restarts PM2 **`aicountly-qa-worker`**
 
-The worker host is independent — deploy from **apis-aicountly** (`worker.apis.aicountly.com/`) via SSH + PM2 on the apisaicountly server.
+Worker `.env` is never written by GitHub Actions (create once on the server). Details: [QA-WORKER.md](./QA-WORKER.md).

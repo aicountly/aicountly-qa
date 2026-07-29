@@ -24,7 +24,7 @@ It is testing & reporting only. Code fixes belong in the target product repo.
 |----------|-------------------------------------------------------------------|
 | Frontend | React 19 + Vite + Tailwind (existing green AICOUNTLY palette)    |
 | Backend  | PHP CodeIgniter 4.6 + PostgreSQL (independent JWT auth)          |
-| Worker   | Node 20+ + Playwright on [apis-aicountly/worker.apis.aicountly.com](https://github.com/aicountly/apis-aicountly/tree/main/worker.apis.aicountly.com) |
+| Worker   | Node 20+ + Playwright in-repo (`worker/`, PM2 `aicountly-qa-worker`) |
 
 ## Repo layout
 
@@ -41,10 +41,10 @@ server-php/               CodeIgniter 4.6 API
     Migrations/          18 + run-sequence migrations
     Seeds/               Roles, Owner, Books pack, Expected results, Rules, Settings
     Templates/books/     25+ session templates as JSON
-worker/                   Pointer → apis-aicountly/worker.apis.aicountly.com
-docs/                     Setup + architecture
+worker/                   Dedicated Playwright worker (aicountly-qa-worker)
+docs/                     Setup + architecture (+ QA-WORKER.md)
 qa-reports/               Generated reports (gitignored)
-.github/                  Deploy workflow (cPanel)
+.github/                  Deploy workflow (cPanel: web + api + worker)
 ```
 
 ## Quick start (local dev)
@@ -81,25 +81,25 @@ npm install
 npm run dev
 ```
 
-### 4. Playwright worker
-
-The worker lives in the **apis-aicountly** repo (not this repo):
+### 4. Playwright worker (dedicated, in this repo)
 
 ```bash
-git clone https://github.com/aicountly/apis-aicountly.git
-cd apis-aicountly/worker.apis.aicountly.com
-cp .env.example .env                     # set QA_API_URL + QA_WORKER_TOKEN
+cd worker
+cp .env.example .env                     # QA_API_URL + QA_WORKER_TOKEN (QA_* only)
 npm install
 npm run playwright:install
-npm start
+npm run build
+npm start                                # banner: AICOUNTLY QA Worker (dedicated)
 ```
 
-Production: `/home/apisaicountly/public_html/worker.apis.aicountly.com` on **worker.apis.aicountly.com**.
+Production (QA cPanel): `~/aicountly-qa-worker`, PM2 name **`aicountly-qa-worker`**. See [docs/QA-WORKER.md](docs/QA-WORKER.md).
 
 ## Production deployment
 
-- **Frontend & API** deploy via `.github/workflows/deploy-prod-cpanel.yml` (manual):
-  - ships `web/dist` → `public_html/` and `server-php/` → `public_html/api/`
-- **Worker** runs on **worker.apis.aicountly.com** ([apis-aicountly](https://github.com/aicountly/apis-aicountly) repo). Long-lived Node + Playwright; polls `qa.aicountly.org/api` only.
+- `.github/workflows/deploy-prod-cpanel.yml` (manual) ships:
+  - `web/dist` → `public_html/`
+  - `server-php/` → `public_html/api/`
+  - `worker/` → `~/aicountly-qa-worker` + PM2 restart `aicountly-qa-worker`
+- Worker auth is unchanged: `X-Worker-Token` / `QA_WORKER_TOKEN` against the QA API.
 
-See [docs/QA-PORTAL-README.md](docs/QA-PORTAL-README.md) for the full setup, runtime architecture, naming conventions, and how to add more session templates.
+See [docs/QA-PORTAL-README.md](docs/QA-PORTAL-README.md) and [docs/QA-WORKER.md](docs/QA-WORKER.md) for setup, runtime contracts, and WHM one-time commands.

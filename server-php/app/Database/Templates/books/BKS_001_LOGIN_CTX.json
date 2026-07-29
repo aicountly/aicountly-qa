@@ -14,6 +14,7 @@
     { "kind": "fill", "selector_options": ["input[type=password]", "input[name=password]", "#password"], "value": "{password}" },
     { "kind": "click", "selector_options": ["button[type=submit]:has-text('CONTINUE')", "button:has-text('CONTINUE')", "button:has-text('SIGN IN')", "input[type=submit]"] },
     { "kind": "expect_login_outcome", "success_url_matches": "/dashboard|/home|/companies|/company|/app|/books|/workspace", "login_url_matches": "/login", "error_selector_options": ["[role=alert]", ".alert-danger", ".error", ".invalid-feedback", "[class*=error]"], "error_text_matches": "jump to|credential|password|invalid|incorrect|otp|verification|challenge", "failed_steps_note": "Login remained on /login. Record visible Jump To, credential, password, OTP, verification, or challenge text." },
+    { "kind": "expect_product_host", "expected_base_url": "{base_url}", "allowed_domains": "{allowed_domains}", "recover_once": true, "rule_code": "AUTH_PRODUCT_HOST_MATCH", "on_failure_note": "Login reached the wrong product host. Capture the landed URL and Jump To selection, then fail instead of collecting unrelated product evidence." },
     { "kind": "expect_url",   "matches": "/dashboard|/home|/companies|/company|/app|/books|/workspace" },
     { "kind": "select_or_create_company", "name_template": "{QA_RUN_ID} Test Company Pvt Ltd" },
     { "kind": "select_or_create_branch",  "name_template": "{QA_RUN_ID} HO" },
@@ -30,6 +31,7 @@
       { "kind": "fill", "selector_options": ["input[type=password]", "input[name=password]", "#password"], "value": "{password}" },
       { "kind": "click", "selector_options": ["button[type=submit]:has-text('CONTINUE')", "button:has-text('CONTINUE')", "button:has-text('SIGN IN')", "input[type=submit]"] },
       { "kind": "expect_login_outcome", "success_url_matches": "/dashboard|/home|/companies|/company|/app|/books|/workspace", "login_url_matches": "/login", "error_selector_options": ["[role=alert]", ".alert-danger", ".error", ".invalid-feedback", "[class*=error]"], "error_text_matches": "jump to|credential|password|invalid|incorrect|otp|verification|challenge", "failed_steps_note": "Login remained on /login. Record visible Jump To, credential, password, OTP, verification, or challenge text." },
+      { "kind": "expect_product_host", "expected_base_url": "{base_url}", "allowed_domains": "{allowed_domains}", "recover_once": true, "rule_code": "AUTH_PRODUCT_HOST_MATCH", "on_failure_note": "Login reached the wrong product host. Capture the landed URL and Jump To selection, then fail instead of collecting unrelated product evidence." },
       { "kind": "expect_visible", "selector": "[data-test=app-shell],main,#app,.app-shell,.dashboard,body" }
     ],
     "prod_full": [
@@ -41,8 +43,9 @@
       { "kind": "fill", "selector_options": ["input[type=password]", "input[name=password]", "#password"], "value": "{password}" },
       { "kind": "click", "selector_options": ["button[type=submit]:has-text('CONTINUE')", "button:has-text('CONTINUE')", "button:has-text('SIGN IN')", "input[type=submit]"] },
       { "kind": "expect_login_outcome", "success_url_matches": "/dashboard|/home|/companies|/company|/app|/books|/workspace", "login_url_matches": "/login", "error_selector_options": ["[role=alert]", ".alert-danger", ".error", ".invalid-feedback", "[class*=error]"], "error_text_matches": "jump to|credential|password|invalid|incorrect|otp|verification|challenge", "failed_steps_note": "Login remained on /login. Record visible Jump To, credential, password, OTP, verification, or challenge text." },
+      { "kind": "expect_product_host", "expected_base_url": "{base_url}", "allowed_domains": "{allowed_domains}", "recover_once": true, "rule_code": "AUTH_PRODUCT_HOST_MATCH", "on_failure_note": "Login reached the wrong product host. Capture the landed URL and Jump To selection, then fail instead of collecting unrelated product evidence." },
       { "kind": "expect_visible", "selector": "[data-test=app-shell],main,#app,.app-shell,.dashboard,body" }
     ]
   },
-  "validations": ["UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
+  "validations": ["AUTH_PRODUCT_HOST_MATCH", "UI_NO_BLANK_PAGE", "UI_NO_CRITICAL_CONSOLE"]
 }

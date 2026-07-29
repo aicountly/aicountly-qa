@@ -16,6 +16,7 @@ use App\Models\TargetProfilesModel;
 use App\Models\TestDataPacksModel;
 use App\Models\ValidationResultsModel;
 use App\Models\ValidationRulesModel;
+use Config\Products;
 use Config\Services;
 
 /**
@@ -66,6 +67,21 @@ class WorkerController extends BaseApiController
             $expected = [];
         }
 
+        $products = new Products();
+        $runtimeContract = [
+            'login' => [
+                'jump_to_candidates' => $products->jumpTargetsFor((string) ($profile['product_name'] ?? '')),
+                'jump_to_selectors'  => ['select#jumptoe', 'select[name=jumptoe]'],
+                'selection_order'    => 'candidate_first',
+            ],
+            'post_login_host_guard' => [
+                'expected_base_url' => (string) ($profile['base_url'] ?? ''),
+                'allowed_domains'   => array_values((array) ($profile['allowed_domains'] ?? [])),
+                'recovery'          => 'navigate_base_url_once_then_fail',
+                'validation_rule'   => 'AUTH_PRODUCT_HOST_MATCH',
+            ],
+        ];
+
         // Mark session running and start the QA run clock on first pickup.
         (new SessionsModel())->update($session['id'], ['status' => 'running', 'started_at' => date('Y-m-d H:i:s')]);
         if ($run && in_array($run['status'] ?? '', ['pending', 'running'], true) && empty($run['started_at'])) {
@@ -97,6 +113,7 @@ class WorkerController extends BaseApiController
             'pack'      => $pack,
             'expected'  => $expected,
             'rules'     => $rules,
+            'runtime_contract' => $runtimeContract,
         ]);
     }
 

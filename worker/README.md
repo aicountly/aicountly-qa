@@ -1,61 +1,75 @@
-# QA Worker (moved)
+# AICOUNTLY QA Worker (dedicated)
 
-The Playwright worker no longer lives in this repo.
+In-repo Playwright worker for the **QA portal only**.
 
-**Source & deploy:** [apis-aicountly/worker.apis.aicountly.com](https://github.com/aicountly/apis-aicountly/tree/main/worker.apis.aicountly.com)
+| Identity | Value |
+|----------|--------|
+| npm package | `aicountly-qa-worker` |
+| PM2 process name | `aicountly-qa-worker` |
+| Startup banner | `AICOUNTLY QA Worker (dedicated)` |
+| Env prefix | `QA_*` only (no `SMOKE_*`) |
 
-**Production path (cPanel):**
+This is **not** the shared host at `worker.apis.aicountly.com`. Agents can read and change this code in `aicountly-qa/worker/`.
+
+## Production layout (QA cPanel)
 
 ```
-/home/apisaicountly/public_html/worker.apis.aicountly.com
+/home/<QA_CPANEL_USER>/
+  public_html/              # web + api (existing deploy)
+  aicountly-qa-worker/      # this package (Node + Playwright)
+  qa-reports/               # evidence root (QA_REPORTS_DIR)
 ```
 
-Subdomain: **worker.apis.aicountly.com**
+The GitHub Actions workflow `deploy-prod-cpanel.yml` rsyncs this package to `~/aicountly-qa-worker` (sibling of `public_html`) and restarts PM2 `aicountly-qa-worker`.
 
-The worker polls **qa.aicountly.org** (`QA_API_URL=https://qa.aicountly.org/api`) with `QA_WORKER_TOKEN` matching `server-php/.env` on the QA portal host.
+## Local setup
 
-See the [apis-aicountly worker README](https://github.com/aicountly/apis-aicountly/blob/main/worker.apis.aicountly.com/README.md) for install, PM2, and AlmaLinux setup.
+```bash
+cd worker
+cp .env.example .env
+# QA_API_URL=http://localhost:8080/api
+# QA_WORKER_TOKEN=<same as server-php/.env>
+# QA_WORKER_ID=aicountly-qa-worker-local
+# QA_REPORTS_DIR=../qa-reports
+npm install
+npx playwright install chromium
+npm run build
+npm start
+# or: npm run start:tsx
+```
 
-## Runtime contracts required by QA
+## Scripts
 
-The companion worker must implement these contracts before the new templates can run.
+| Script | Purpose |
+|--------|---------|
+| `npm start` | Poll/claim loop (`dist/index.js`) |
+| `npm run qa:run-session` | One session then exit |
+| `npm run qa:basic-check` | Prod-safe login/nav only |
+| `npm run qa:books` | Poll loop (soft books preference) |
+| `npm run qa:reports -- --run-dir=...` | Rebuild consolidated HTML/JSON |
+| `npm test` | Jump To + host-guard unit tests |
 
-### Jump To login
+## API contract
 
-`BKS_001_LOGIN_CTX` is a two-step login:
+Talks to `qa.aicountly.org/api` with header `X-Worker-Token: $QA_WORKER_TOKEN`:
 
-1. Fill identity.
-2. Select Smart Books in `select#jumptoe` or `select[name=jumptoe]` (`Smart Books`, `{jump_to}`, or `books`).
-3. Click **SIGN IN**, wait until the password input is visible, fill password, then click **CONTINUE/SIGN IN**.
-4. Detect success by leaving `/login` for the Books shell. If the page stays on `/login`, collect visible Jump To, credential, password, OTP/2FA, verification, or challenge text in `failed_steps`.
+- `GET /v1/worker/next-session` — claim + `runtime_contract`
+- `POST /v1/worker/sessions/:id/heartbeat|progress|result|evidence`
+- `GET /v1/worker/credentials/:id`
+- Decisions: `POST/GET /v1/worker/decisions`, `…/timeout`, `GET /v1/worker/decision-memory`
 
-The runner must support `selector_options`, `value_options`, `expect_login_outcome`, and the timeout/failure-note fields used by the template. OTP/challenge walls should use situation `login_otp_or_challenge`.
+## Runtime contracts implemented
 
-### Books File I/O
+- Product-scoped Jump To (`runtime_contract.login.jump_to_candidates`; candidate order wins)
+- `expect_login_outcome` / `expect_product_host` → `AUTH_PRODUCT_HOST_MATCH`
+- Mid-run `ask_decision` → `awaiting_decision` + heartbeat while paused
+- Books File I/O kinds (sandbox import/export/compare; production `assert_file_upload_blocked`)
+- `safeActionGuard` on production clicks
 
-`BKS_029_FILE_IO` adds these declarative kinds: `ask_decision`, `file_import`, `expect_import_result`, `file_export`, `compare_file_roundtrip`, `file_upload_expect_rejected`, and `assert_file_upload_blocked`.
+## One-time WHM / SSH setup
 
-Resolve fixture paths relative to the template directory. Canonical CSV comparison ignores the declared generated columns. Never upload in `prod_basic` or `prod_full`; assert `blocked_by_safe_guard` without offering `approve_upload`.
+See [docs/QA-PORTAL-README.md](../docs/QA-PORTAL-README.md) § Worker (dedicated) for copy-paste AlmaLinux / cPanel commands (Node 20+, PM2, Playwright deps, `.env`, first `pm2 start`).
 
-### Mid-run decisions
+## Disconnect from shared worker
 
-Implement `askOrRecallDecision` as follows:
-
-1. Query `GET /api/v1/worker/decision-memory?product_name=&environment=&situation_key=`.
-2. Use a remembered option only when its id still exists in the current `options_json`. Audit that use with `POST /api/v1/worker/decisions` and `memory_applied=true`.
-3. Otherwise create a pending decision with `POST /api/v1/worker/decisions`; keep the browser/session alive and continue posting session heartbeat while polling `GET /api/v1/worker/decisions/:id`.
-4. Poll until `answered`, `timed_out`, or `cancelled`. After 30 minutes, call `POST /api/v1/worker/decisions/:id/timeout`.
-5. Execute the selected action (`open_company`, `dismiss_overlay`, `wait_and_retry`, `approve_upload`, `skip_step`, `skip_file_io`, `mark_blocked`, `abort_session`, and situation-specific candidate ids), then resume or finish the template. Plain question/options are sufficient; no smoke phrasing layer is required.
-
-Pending creation changes the session to `awaiting_decision`; answering restores `running` or `claimed`. A heartbeat is mandatory while paused so the lease remains visibly healthy.
-
-## Shared-host regression checklist
-
-After worker deployment, and again after adding any `SMOKE_*` variables or smoke process on the shared host:
-
-- QA and smoke use separate API URLs/tokens, poll loops, process names, and report roots.
-- A QA Jump To login reaches the password step and surfaces OTP/login errors.
-- QA Live Log receives progress, heartbeat, and evidence.
-- A pending QA decision pauses, appears in the portal, answers, resumes, and records its report audit row.
-- Books File I/O uses only the deterministic fixture in sandbox and remains blocked in production.
-- Restarting either portal worker process does not claim the other portal’s jobs.
+Do **not** point this process at `worker.apis.aicountly.com`. After the dedicated worker is healthy on the QA cPanel account, stop any QA-facing process that still runs on the shared apis host so only `aicountly-qa-worker` claims QA jobs.
