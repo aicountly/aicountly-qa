@@ -4,9 +4,11 @@ namespace App\Controllers\Api\V1;
 
 use App\Controllers\BaseApiController;
 use App\Models\CredentialsModel;
+use App\Models\DecisionMemoryModel;
 use App\Models\ErrorRegisterModel;
 use App\Models\ExpectedResultsModel;
 use App\Models\RunsModel;
+use App\Models\RunDecisionsModel;
 use App\Models\SessionEventsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
@@ -145,12 +147,175 @@ class WorkerController extends BaseApiController
                     'metadata'    => is_array($body['metadata'] ?? null) ? $body['metadata'] : null,
                 ]
             );
-        } elseif ($session && in_array($session['status'] ?? '', ['claimed', 'running'], true)) {
+        } elseif ($session && in_array($session['status'] ?? '', SessionsModel::LEASED, true)) {
             // Older workers send empty heartbeats — still surface liveness in Live Log (throttled).
             $this->recordThrottledAliveEvent($sessionId, (string) $session['qa_run_id'], $workerId);
         }
 
         return $this->ok(['ok' => true]);
+    }
+
+    public function createDecision()
+    {
+        $body = $this->input();
+        $sessionId = (int) ($body['session_id'] ?? 0);
+        $session = (new SessionsModel())->find($sessionId);
+        if (! $session) {
+            return $this->fail('Session not found.', 404);
+        }
+        if (! in_array((string) ($session['status'] ?? ''), SessionsModel::LEASED, true)) {
+            return $this->fail('Decisions can only be created for an active leased session.', 409);
+        }
+        $qaRunId = (string) ($body['qa_run_id'] ?? $session['qa_run_id']);
+        if ($qaRunId !== (string) $session['qa_run_id']) {
+            return $this->fail('qa_run_id does not match session.', 400);
+        }
+        $situation = trim((string) ($body['situation_key'] ?? ''));
+        $question = trim((string) ($body['question'] ?? ''));
+        $options = $body['options_json'] ?? $body['options'] ?? null;
+        if ($situation === '' || $question === '' || ! is_array($options) || $options === []) {
+            return $this->fail('session_id, situation_key, question, and non-empty options_json are required.', 400);
+        }
+        foreach ($options as $option) {
+            if (! is_array($option) || trim((string) ($option['id'] ?? '')) === '' || trim((string) ($option['label'] ?? '')) === '') {
+                return $this->fail('Each options_json item requires id and label.', 400);
+            }
+        }
+
+        $memoryApplied = filter_var($body['memory_applied'] ?? false, FILTER_VALIDATE_BOOL);
+        $selected = $memoryApplied ? trim((string) ($body['selected_option'] ?? '')) : null;
+        $optionIds = array_map(static fn ($option) => (string) $option['id'], $options);
+        if ($memoryApplied && ($selected === '' || ! in_array($selected, $optionIds, true))) {
+            return $this->fail('Memory-applied decisions require a valid selected_option.', 400);
+        }
+
+        $model = new RunDecisionsModel();
+        $id = $model->insert([
+            'qa_run_id'       => $qaRunId,
+            'session_id'      => $sessionId,
+            'situation_key'   => $situation,
+            'question'        => $question,
+            'options_json'    => array_values($options),
+            'context_json'    => is_array($body['context_json'] ?? null) ? $body['context_json'] : null,
+            'screenshot_path' => isset($body['screenshot_path']) ? (string) $body['screenshot_path'] : null,
+            'status'          => $memoryApplied ? 'answered' : 'pending',
+            'selected_option' => $selected,
+            'answered_at'     => $memoryApplied ? date('Y-m-d H:i:s') : null,
+            'remember'        => $memoryApplied,
+            'source'          => $memoryApplied ? 'memory' : 'human',
+        ], true);
+
+        if (! $memoryApplied) {
+            (new SessionsModel())->update($sessionId, [
+                'status'            => 'awaiting_decision',
+                'last_heartbeat_at' => date('Y-m-d H:i:s'),
+            ]);
+        }
+        $this->recordEvent(
+            $sessionId,
+            $qaRunId,
+            $memoryApplied ? 'decision_memory_applied' : 'decision_pending',
+            $memoryApplied ? 'Remembered decision applied: ' . $selected : 'Waiting for operator decision: ' . $question,
+            ['metadata' => ['decision_id' => (int) $id, 'situation_key' => $situation]]
+        );
+
+        return $this->ok(['decision' => $model->find($id)], 201);
+    }
+
+    public function decision(int $id)
+    {
+        $row = (new RunDecisionsModel())->find($id);
+        if (! $row) {
+            return $this->fail('Decision not found.', 404);
+        }
+
+        return $this->ok(['decision' => $row]);
+    }
+
+    public function timeoutDecision(int $id)
+    {
+        $model = new RunDecisionsModel();
+        $decision = $model->find($id);
+        if (! $decision) {
+            return $this->fail('Decision not found.', 404);
+        }
+        if (($decision['status'] ?? '') !== 'pending') {
+            return $this->fail('Only pending decisions can time out.', 409);
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $model->update($id, ['status' => 'timed_out', 'answered_at' => $now]);
+        (new SessionsModel())->update((int) $decision['session_id'], [
+            'status' => 'failed',
+            'completed_at' => $now,
+            'last_heartbeat_at' => $now,
+        ]);
+        $summary = 'Decision timed out after 30 minutes for situation "' . $decision['situation_key'] . '".';
+        $results = new SessionResultsModel();
+        if (! $results->where('session_id', (int) $decision['session_id'])->first()) {
+            $results->insert([
+                'session_id' => (int) $decision['session_id'],
+                'qa_run_id' => (string) $decision['qa_run_id'],
+                'status' => 'failed',
+                'severity' => 'high',
+                'passed_count' => 0,
+                'failed_count' => 1,
+                'warning_count' => 0,
+                'result_json' => ['fatal_error' => $summary, 'decision_id' => $id],
+                'screenshot_paths' => array_values(array_filter([(string) ($decision['screenshot_path'] ?? '')])),
+                'console_errors' => [],
+                'network_errors' => [],
+                'suggested_area' => 'QA worker decision handling',
+                'suggested_prompt' => 'Inspect the timed-out decision context and make the blocked path deterministic.',
+                'completed_at' => $now,
+                'created_at' => $now,
+            ]);
+        }
+        (new ErrorRegisterModel())->upsertSignature([
+            'signature' => sha1('decision-timeout|' . $decision['qa_run_id'] . '|' . $decision['session_id'] . '|' . $decision['situation_key']),
+            'title' => 'Operator decision timed out: ' . $decision['situation_key'],
+            'severity' => 'high',
+            'module' => 'worker',
+            'last_seen_run_id' => $decision['qa_run_id'],
+            'last_session_id' => $decision['session_id'],
+            'sample_message' => $summary,
+            'human_summary' => $summary,
+            'developer_fix_prompt' => 'Reproduce the blocked QA path for situation "' . $decision['situation_key']
+                . '", inspect decision ' . $id . ' context/evidence, and add a deterministic safe recovery or clearer operator guidance.',
+            'suggested_developer_area' => 'QA worker decision handling',
+        ]);
+        $this->recordEvent(
+            (int) $decision['session_id'],
+            (string) $decision['qa_run_id'],
+            'decision_timed_out',
+            $summary,
+            ['metadata' => ['decision_id' => $id, 'situation_key' => $decision['situation_key']]]
+        );
+        Services::reportService()->buildSessionReport((int) $decision['session_id']);
+        $remaining = (new SessionsModel())->where('qa_run_id', $decision['qa_run_id'])
+            ->whereIn('status', SessionsModel::ACTIVE)->countAllResults();
+        if ($remaining === 0) {
+            Services::reportService()->buildFinalReport((string) $decision['qa_run_id']);
+        }
+
+        return $this->ok(['decision' => $model->find($id)]);
+    }
+
+    public function decisionMemory()
+    {
+        $product = trim((string) ($this->request->getGet('product_name') ?? ''));
+        $environment = trim((string) ($this->request->getGet('environment') ?? ''));
+        $situation = trim((string) ($this->request->getGet('situation_key') ?? ''));
+        if ($product === '' || $environment === '' || $situation === '') {
+            return $this->fail('product_name, environment, and situation_key are required.', 400);
+        }
+        $row = (new DecisionMemoryModel())
+            ->where('product_name', $product)
+            ->where('environment', $environment)
+            ->where('situation_key', $situation)
+            ->first();
+
+        return $this->ok(['memory' => $row]);
     }
 
     /**
@@ -165,7 +330,6 @@ class WorkerController extends BaseApiController
         if (! $session) {
             return $this->fail('Session not found.', 404);
         }
-
         $body = $this->input();
         $message = trim((string) ($body['message'] ?? $body['activity'] ?? ''));
         if ($message === '') {
@@ -225,6 +389,15 @@ class WorkerController extends BaseApiController
         if (! $session) {
             return $this->fail('Session not found.', 404);
         }
+        try {
+            (new RunDecisionsModel())
+                ->where('session_id', $sessionId)
+                ->where('status', 'pending')
+                ->set(['status' => 'cancelled'])
+                ->update();
+        } catch (\Throwable $e) {
+            // Decisions table may not exist yet on older deploys.
+        }
 
         $results = new SessionResultsModel();
         $results->insert([
@@ -274,6 +447,19 @@ class WorkerController extends BaseApiController
                 $sample   = $notes !== ''
                     ? $notes
                     : trim('expected=' . $expected . ' actual=' . $actual, ' =');
+                $humanSummary = ($ruleCode !== '' ? $ruleCode : 'Validation')
+                    . ' failed' . ($actual !== '' ? ': actual "' . $actual . '"' : '')
+                    . ($expected !== '' ? ' instead of expected "' . $expected . '".' : '.');
+                $evidence = array_values(array_filter(array_map(
+                    'strval',
+                    (array) ($body['screenshot_paths'] ?? [])
+                )));
+                $evidenceText = $evidence !== [] ? implode(', ', $evidence) : 'session report and captured trace/console/network evidence';
+                $developerPrompt = 'Fix failed QA rule ' . ($ruleCode !== '' ? $ruleCode : 'unknown')
+                    . ' in the ' . $module . ' module. Expected: ' . ($expected !== '' ? $expected : '(not supplied)')
+                    . '. Actual: ' . ($actual !== '' ? $actual : '(not supplied)')
+                    . '. Evidence: ' . $evidenceText
+                    . '. Reproduce the failure, identify the root cause, implement the smallest safe fix, and add or update regression coverage.';
 
                 (new ErrorRegisterModel())->upsertSignature([
                     'signature'                => sha1($ruleCode . '|' . $expected . '|' . $actual),
@@ -284,6 +470,8 @@ class WorkerController extends BaseApiController
                     'last_seen_run_id'         => $session['qa_run_id'],
                     'last_session_id'          => $sessionId,
                     'sample_message'           => $sample !== '' ? $sample : null,
+                    'human_summary'            => $humanSummary,
+                    'developer_fix_prompt'     => $developerPrompt,
                     'suggested_developer_area' => 'Likely area: ' . $module
                         . ' module — investigate rule ' . ($ruleCode !== '' ? $ruleCode : 'unknown') . '.',
                 ]);
@@ -306,7 +494,7 @@ class WorkerController extends BaseApiController
         $doneMsg = $isLogin
             ? ($okLogin
                 ? 'LOGIN SUCCESSFUL — Smart Books sign-in completed (' . $status . ').'
-                : 'LOGIN FAILED / INCOMPLETE — status ' . $status . ' (severity: ' . $severity . '). Check credentials, login URL, and View log screenshots.')
+                : 'LOGIN FAILED / INCOMPLETE — status ' . $status . ' (severity: ' . $severity . '). Check credentials, Jump To → Smart Books, OTP/challenge state, login URL, and View log screenshots.')
             : 'Session finished with status: ' . $status . ' (severity: ' . $severity . ')';
 
         $this->recordEvent(
@@ -328,7 +516,7 @@ class WorkerController extends BaseApiController
 
         // If no queued sessions remain for this run, build the final consolidated report.
         $remaining = (new SessionsModel())->where('qa_run_id', $session['qa_run_id'])
-            ->whereIn('status', ['queued', 'claimed', 'running'])->countAllResults();
+            ->whereIn('status', SessionsModel::ACTIVE)->countAllResults();
         if ($remaining === 0) {
             Services::reportService()->buildFinalReport($session['qa_run_id']);
         }

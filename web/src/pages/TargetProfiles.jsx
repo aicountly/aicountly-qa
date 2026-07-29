@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
 import { EnvBadge, StatusBadge } from '../components/Badges.jsx'
 import { useAuth } from '../lib/auth.jsx'
+import { productLabel } from '../lib/products.js'
 
 export default function TargetProfiles() {
   const qc = useQueryClient()
@@ -55,7 +56,7 @@ export default function TargetProfiles() {
             {(data || []).map((p) => (
               <tr key={p.id}>
                 <td className="font-medium text-neutral-900">{p.profile_name}</td>
-                <td>{p.product_name}</td>
+                <td>{productLabel(p.product_name)}</td>
                 <td><EnvBadge environment={p.environment} /></td>
                 <td>
                   {p.has_credentials

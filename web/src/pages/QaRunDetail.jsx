@@ -2,8 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
 import { EnvBadge, SeverityBadge, StatusBadge } from '../components/Badges.jsx'
+import PendingDecisionCard, { shouldPollDecisions } from '../components/PendingDecisionCard.jsx'
 import { fmtDate } from '../lib/format.js'
 import { useAuth } from '../lib/auth.jsx'
+
+const ACTIVE_SESSION_STATUSES = ['queued', 'claimed', 'running', 'awaiting_decision']
 
 function humanizeFatalError(msg) {
   if (!msg) return null
@@ -61,7 +64,7 @@ export default function QaRunDetail() {
     queryFn: async () => (await api.get(v1(`/runs/${id}`))).data?.data,
     refetchInterval: (q) => {
       const sessions = q.state.data?.sessions || []
-      const active = sessions.some((s) => ['queued', 'claimed', 'running'].includes(s.status))
+      const active = sessions.some((s) => ACTIVE_SESSION_STATUSES.includes(s.status))
         || ['pending', 'running'].includes(q.state.data?.status)
       return active ? 3000 : false
     },
@@ -136,7 +139,12 @@ export default function QaRunDetail() {
   const r = run.data
   const sessions = r.sessions || []
   const queuedCount = sessions.filter((s) => s.status === 'queued').length
-  const activeCount = sessions.filter((s) => ['queued', 'claimed', 'running'].includes(s.status)).length
+  const activeCount = sessions.filter((s) => ACTIVE_SESSION_STATUSES.includes(s.status)).length
+  const awaitingDecision = sessions.some((s) => s.status === 'awaiting_decision')
+  const pollDecisions = shouldPollDecisions([
+    r.status,
+    ...sessions.map((s) => s.status),
+  ]) || awaitingDecision
   const workerOnline = workerStatus.data?.online === true
   const profile = r.target_profile
   const missingCreds = profile && profile.has_credentials === false
@@ -212,6 +220,11 @@ export default function QaRunDetail() {
             Status updates automatically every few seconds. Sessions with no worker progress for 15 minutes are marked failed.
           </p>
         )}
+        {awaitingDecision && (
+          <p className="mt-3 text-sm text-amber-900">
+            A session is waiting for a human decision. Answer below (or on the session live log) to unblock the worker.
+          </p>
+        )}
         {activeCount > 0 && !workerOnline && (
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
             <p className="font-medium">Note: QA worker is offline</p>
@@ -227,6 +240,10 @@ export default function QaRunDetail() {
           </div>
         )}
       </div>
+
+      {pollDecisions && (
+        <PendingDecisionCard qaRunId={r.qa_run_id || id} enabled={pollDecisions} />
+      )}
 
       <div className="qa-card overflow-x-auto p-0">
         <table className="qa-table">
@@ -247,7 +264,7 @@ export default function QaRunDetail() {
             {(r.sessions || []).map((s) => {
               const sum = s.result_summary
               const canOpenReport = sum?.has_report
-              const showLive = ['queued', 'claimed', 'running'].includes(s.status)
+              const showLive = ACTIVE_SESSION_STATUSES.includes(s.status)
               const canRerunRow = canRerun && ['completed', 'failed', 'skipped', 'partial', 'blocked_by_safe_guard'].includes(s.status)
               return (
                 <tr key={s.id} id={`s-${s.id}`}>

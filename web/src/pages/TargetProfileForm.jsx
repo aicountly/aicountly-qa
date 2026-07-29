@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, v1 } from '../lib/api.js'
 import ProductionBanner from '../components/ProductionBanner.jsx'
-import { SAAS_PRODUCTS } from '../lib/products.js'
+import { SAAS_PRODUCTS, canonicalizeProductSlug } from '../lib/products.js'
 const envs = [
   { value: 'sandbox',    label: 'Sandbox' },
   { value: 'gh',         label: 'GH / Staging' },
@@ -45,6 +45,7 @@ export default function TargetProfileForm() {
     setForm((f) => ({
       ...f,
       ...existing,
+      product_name: canonicalizeProductSlug(existing.product_name) || existing.product_name || f.product_name,
       allowed_domains: Array.isArray(existing.allowed_domains) ? existing.allowed_domains.join(',') : (existing.allowed_domains || ''),
       allowed_modules: Array.isArray(existing.allowed_modules) ? existing.allowed_modules.join(',') : (existing.allowed_modules || ''),
       ip_restriction:  Array.isArray(existing.ip_restriction)  ? existing.ip_restriction.join(',')  : (existing.ip_restriction  || ''),

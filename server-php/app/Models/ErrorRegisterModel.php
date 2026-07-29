@@ -15,7 +15,8 @@ class ErrorRegisterModel extends Model
         'signature', 'title', 'severity', 'product_name', 'module',
         'first_seen_run_id', 'last_seen_run_id', 'last_session_id',
         'first_seen_at', 'last_seen_at', 'count',
-        'sample_message', 'suggested_developer_area', 'status',
+        'sample_message', 'human_summary', 'developer_fix_prompt',
+        'suggested_developer_area', 'status',
     ];
 
     public function upsertSignature(array $row): int
@@ -37,6 +38,12 @@ class ErrorRegisterModel extends Model
             }
             if (! empty($row['sample_message'])) {
                 $patch['sample_message'] = $row['sample_message'];
+            }
+            if (! empty($row['human_summary'])) {
+                $patch['human_summary'] = $row['human_summary'];
+            }
+            if (! empty($row['developer_fix_prompt'])) {
+                $patch['developer_fix_prompt'] = $row['developer_fix_prompt'];
             }
             if (! empty($row['title'])) {
                 $patch['title'] = $row['title'];

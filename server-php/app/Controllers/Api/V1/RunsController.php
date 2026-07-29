@@ -87,7 +87,7 @@ class RunsController extends ResourceController
             if ($isLoginSession && ($failedSteps !== [] || ($res['status'] ?? '') === 'partial')) {
                 $stepList = $failedSteps !== [] ? implode(', ', array_unique($failedSteps)) : 'login workflow';
                 $fatal = 'Login did not complete. Failed steps: ' . $stepList
-                    . '. Check Target App Profile login URL, username, and saved password. Selectors must match the Smart Books login form.';
+                    . '. Check Target App Profile login URL, username, saved password, Jump To selection, and any OTP/challenge. Selectors must match the two-step Smart Books login form.';
             } elseif ($fatal === null && ($res['status'] ?? '') === 'partial' && (int) ($rj['workflow_steps'] ?? 0) <= 1) {
                 $fatal = 'Session failed early (often missing target credentials or login error).';
             }
@@ -96,8 +96,8 @@ class RunsController extends ResourceController
             $suggestedPrompt = $res['suggested_prompt'] ?? null;
             if ($isLoginSession && $fatal !== null) {
                 // Hide misleading "all product rules failed" guidance for login sessions.
-                $suggestedArea   = 'Login credentials / login page selectors';
-                $suggestedPrompt = 'Verify Book Login profile: correct login URL, username, and saved password. Confirm the Smart Books login fields match email/username + password inputs.';
+                $suggestedArea   = 'Login credentials / Jump To / OTP challenge';
+                $suggestedPrompt = 'Verify Book Login profile and the two-step flow: fill identity, select Smart Books in Jump To (#jumptoe), submit, wait for password, then continue. Check saved password and complete or report any OTP/2FA challenge.';
             }
 
             $sessions[$i]['result_summary'] = [
@@ -141,7 +141,7 @@ class RunsController extends ResourceController
 
         $active = (new SessionsModel())
             ->where('qa_run_id', $id)
-            ->whereIn('status', ['claimed', 'running'])
+            ->whereIn('status', SessionsModel::LEASED)
             ->countAllResults();
         if ($active > 0) {
             return $this->fail('Cannot delete a run while sessions are executing.', 409);
@@ -164,6 +164,39 @@ class RunsController extends ResourceController
         return $this->respondDeleted(['ok' => true, 'disk_artifacts_removed' => $removed]);
     }
 
+    public function update($id = null)
+    {
+        $body = $this->request->getJSON(true);
+        $body = is_array($body) ? $body : [];
+        if (($body['status'] ?? null) !== 'cancelled') {
+            return parent::update($id);
+        }
+        $run = $this->model->find($id);
+        if (! $run) {
+            return $this->failNotFound();
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $db = $this->model->db;
+        $db->transStart();
+        $db->table('qa_run_decisions')
+            ->where('qa_run_id', $id)
+            ->where('status', 'pending')
+            ->update(['status' => 'cancelled', 'updated_at' => $now]);
+        $db->table('qa_sessions')
+            ->where('qa_run_id', $id)
+            ->whereIn('status', SessionsModel::ACTIVE)
+            ->update(['status' => 'cancelled', 'completed_at' => $now, 'updated_at' => $now]);
+        $this->model->update($id, ['status' => 'cancelled', 'completed_at' => $now]);
+        $db->transComplete();
+        if (! $db->transStatus()) {
+            return $this->fail('Failed to cancel QA run.', 500);
+        }
+        Services::auditService()->log('qa_run_cancel', ['qa_run_id' => $id]);
+
+        return $this->respond(['ok' => true, 'data' => $this->model->find($id)]);
+    }
+
     /** Pending runs with queued sessions should display as running. */
     private function promotePendingRuns(): void
     {
@@ -174,7 +207,7 @@ class RunsController extends ResourceController
              AND EXISTS (
                  SELECT 1 FROM qa_sessions s
                  WHERE s.qa_run_id = r.qa_run_id
-                 AND s.status IN ('queued', 'claimed', 'running')
+                 AND s.status IN ('queued', 'claimed', 'running', 'awaiting_decision')
              )"
         );
     }

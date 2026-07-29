@@ -35,13 +35,14 @@ class SessionPlannerService
         $env       = $profile['environment'];
         $templates = $this->loadTemplates($product);
         $loginOnly = $this->isLoginOnlyPrompt($promptText, $env);
+        $excludeUx = $this->shouldExcludeUx($promptText);
 
         // Filter templates based on environment + prompt intent.
         $sessions = [];
         $order    = 0;
 
         foreach ($templates as $tpl) {
-            if (! $this->shouldIncludeForEnv($tpl, $env, $loginOnly)) {
+            if (! $this->shouldIncludeForEnv($tpl, $env, $loginOnly, $excludeUx)) {
                 continue;
             }
 
@@ -150,21 +151,28 @@ class SessionPlannerService
 
         $p = strtolower($promptText);
 
-        return str_contains($p, 'login only')
-            || str_contains($p, 'login to')
-            || str_contains($p, 'able to login')
-            || str_contains($p, 'can login')
-            || str_contains($p, 'sign in only')
+        $explicitOnly = preg_match('/\b(login|sign[ -]?in)\s+only\b|\bonly\s+(login|sign[ -]?in)\b/', $p) === 1;
+        $fullIntent = preg_match('/\b(full|functional|error pack|gst|reconciliation|reports?|file i\/o|console|api)\b/', $p) === 1;
+
+        return ($explicitOnly && ! $fullIntent)
             || (str_contains($p, 'production basic') && str_contains($p, 'login'));
     }
 
-    private function shouldIncludeForEnv(array $tpl, string $env, bool $loginOnly = false): bool
+    private function shouldExcludeUx(string $promptText): bool
+    {
+        return preg_match('/\b(error pack|functional|gst|reconciliation)\b/i', $promptText) === 1;
+    }
+
+    private function shouldIncludeForEnv(array $tpl, string $env, bool $loginOnly = false, bool $excludeUx = false): bool
     {
         $module = strtolower((string) ($tpl['module'] ?? ''));
 
         // Focus on Login success before any other module runs.
         if ($loginOnly) {
             return $module === 'login';
+        }
+        if ($excludeUx && $module === 'ux') {
+            return false;
         }
 
         // On prod_full (non login-only) keep login + navigation + report-load sessions.

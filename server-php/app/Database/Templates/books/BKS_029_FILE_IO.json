@@ -1,0 +1,41 @@
+{
+  "code": "BKS_029_FILE_IO",
+  "name": "File I/O Correctness",
+  "product": "books",
+  "module": "File I/O",
+  "description": "Import a deterministic Books CSV in sandbox after operator approval, export it, compare canonical rows/MIME, and verify invalid MIME rejection. Production only asserts that upload is blocked.",
+  "severity_on_fail": "critical",
+  "data_keys": ["file_io_fixture"],
+  "steps": [
+    { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
+    { "kind": "ask_decision", "situation_key": "upload_confirm", "question": "Approve importing the deterministic QA bank-statement fixture into this sandbox company?", "options_json": [
+      { "id": "approve_upload", "label": "Approve this upload", "recommended": true },
+      { "id": "skip_file_io", "label": "Skip File I/O" },
+      { "id": "abort_session", "label": "Abort session" }
+    ] },
+    { "kind": "file_import", "fixture": "fixtures/books-bank-statement-v1.csv", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "mime": "text/csv", "mutates_data": true },
+    { "kind": "expect_import_result", "matches": "accepted|imported|success", "reject_statuses": [400, 401, 403, 404, 409, 415, 422, 500] },
+    { "kind": "file_export", "selector_options": ["[data-test=export]", "button:has-text('Export')", "a:has-text('Export')"], "save_as": "books-bank-statement-roundtrip.csv", "expected_mime": ["text/csv", "application/csv", "application/vnd.ms-excel"] },
+    { "kind": "compare_file_roundtrip", "fixture": "fixtures/books-bank-statement-v1.csv", "export_key": "books-bank-statement-roundtrip.csv", "canonicalize": "csv_rows", "ignore_columns": ["id", "created_at", "updated_at"] },
+    { "kind": "file_upload_expect_rejected", "fixture": "fixtures/books-bank-statement-v1.csv", "override_mime": "image/png", "error_matches": "invalid|mime|file type|csv only|unsupported" }
+  ],
+  "steps_by_env": {
+    "prod_basic": [
+      { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
+      { "kind": "assert_file_upload_blocked", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "expected": "blocked_by_safe_guard", "must_not_upload": true }
+    ],
+    "prod_full": [
+      { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
+      { "kind": "assert_file_upload_blocked", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "expected": "blocked_by_safe_guard", "must_not_upload": true }
+    ]
+  },
+  "validations": [
+    "FILE_IMPORT_OK",
+    "FILE_EXPORT_OK",
+    "FILE_ROUNDTRIP_MATCH",
+    "FILE_BAD_MIME_REJECTED",
+    "FILE_PROD_UPLOAD_BLOCKED",
+    "UI_NO_CRITICAL_CONSOLE",
+    "UI_NO_UNHANDLED_API"
+  ]
+}

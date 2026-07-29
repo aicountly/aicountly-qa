@@ -24,12 +24,77 @@ function ruleFromTitle(title) {
   return (m ? m[1] : t).trim()
 }
 
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false)
+  if (!text) return null
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="shrink-0 rounded border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
+      onClick={handleCopy}
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
+function ErrorRowDetail({ error }) {
+  const humanSummary = error.human_summary || ''
+  const fixPrompt = error.developer_fix_prompt || ''
+  const guidance = error.suggested_developer_area || error.sample_message || ''
+
+  if (!humanSummary && !fixPrompt && !guidance) {
+    return <span className="text-neutral-400">—</span>
+  }
+
+  return (
+    <div className="max-w-md space-y-2 text-xs text-neutral-600">
+      {humanSummary ? (
+        <p className="text-neutral-800">{humanSummary}</p>
+      ) : guidance ? (
+        <p title={guidance}>{shortText(guidance, 100)}</p>
+      ) : null}
+
+      {fixPrompt ? (
+        <details className="rounded-md border border-neutral-200 bg-neutral-50">
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-medium text-neutral-800">
+            Developer fix prompt
+          </summary>
+          <div className="border-t border-neutral-200 px-2 py-2">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-neutral-500">Copy into Cursor / IDE</span>
+              <CopyButton text={fixPrompt} />
+            </div>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-neutral-800">
+              {fixPrompt}
+            </pre>
+          </div>
+        </details>
+      ) : null}
+
+      {!humanSummary && !fixPrompt && guidance && guidance.length > 100 ? (
+        <span className="text-neutral-500" title={guidance}>{shortText(guidance, 100)}</span>
+      ) : null}
+    </div>
+  )
+}
+
 export default function ErrorRegister() {
   const qc = useQueryClient()
   const { hasRole } = useAuth()
   const canUpdate = hasRole(['Owner', 'QA Manager'])
   const [filters, setFilters] = useState({ status: 'open' })
-  const [expanded, setExpanded] = useState({})
   const params = new URLSearchParams(
     Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== '')),
   ).toString()
@@ -57,6 +122,7 @@ export default function ErrorRegister() {
           Tip: older Login rows may list many accounting rules from early full-catalogue runs. Prefer
           filtering by <span className="font-medium">open</span> status and the latest Last Seen date.
           Use <strong>Open run</strong> / <strong>View log</strong> for screenshots and step detail.
+          Newer rows may include a human summary and a copyable developer fix prompt.
         </p>
       </div>
 
@@ -92,15 +158,16 @@ export default function ErrorRegister() {
             )}
             {(data || []).map((e) => {
               const rule = ruleFromTitle(e.title)
-              const guidance = e.suggested_developer_area || e.sample_message || ''
-              const isOpen = !!expanded[e.id]
-              const showGuidance = isOpen ? guidance : shortText(guidance, 100)
               return (
                 <tr key={e.id}>
                   <td><SeverityBadge severity={e.severity} /></td>
                   <td className="min-w-[12rem] max-w-xs">
                     <div className="font-mono text-xs font-semibold text-neutral-900">{rule || e.title}</div>
-                    {e.sample_message ? (
+                    {e.human_summary ? (
+                      <div className="mt-0.5 text-xs text-neutral-700" title={e.human_summary}>
+                        {shortText(e.human_summary, 90)}
+                      </div>
+                    ) : e.sample_message ? (
                       <div className="mt-0.5 text-xs text-neutral-600" title={e.sample_message}>
                         {shortText(e.sample_message, 90)}
                       </div>
@@ -135,23 +202,8 @@ export default function ErrorRegister() {
                       <div className="text-[11px] text-neutral-500">{e.last_seen_run_id}</div>
                     )}
                   </td>
-                  <td className="max-w-sm text-xs text-neutral-600">
-                    {guidance ? (
-                      <>
-                        <span title={guidance}>{showGuidance}</span>
-                        {guidance.length > 100 && (
-                          <button
-                            type="button"
-                            className="ml-1 text-aicountly-700 hover:underline"
-                            onClick={() => setExpanded((prev) => ({ ...prev, [e.id]: !prev[e.id] }))}
-                          >
-                            {isOpen ? 'Less' : 'More'}
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-neutral-400">—</span>
-                    )}
+                  <td>
+                    <ErrorRowDetail error={e} />
                   </td>
                   <td className="space-x-2 whitespace-nowrap text-right text-xs">
                     {e.last_seen_run_id ? (

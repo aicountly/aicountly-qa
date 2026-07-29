@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\RunDecisionsModel;
 use App\Models\ReportsModel;
 use App\Models\RunsModel;
 use App\Models\SessionResultsModel;
@@ -26,6 +27,7 @@ class ReportService
 
         $result = (new SessionResultsModel())->where('session_id', $sessionId)->first();
         $validations = (new ValidationResultsModel())->where('session_id', $sessionId)->findAll();
+        $decisions = (new RunDecisionsModel())->where('session_id', $sessionId)->orderBy('created_at')->findAll();
         $run = (new RunsModel())->find($session['qa_run_id']);
 
         $json = [
@@ -33,6 +35,7 @@ class ReportService
             'session'          => $session,
             'result'           => $result,
             'validations'      => $validations,
+            'decisions_taken'  => $decisions,
             'generated_at'     => gmdate('c'),
         ];
 
@@ -135,6 +138,7 @@ class ReportService
         $sessions    = (new SessionsModel())->where('qa_run_id', $qaRunId)->orderBy('order_index')->findAll();
         $results     = (new SessionResultsModel())->where('qa_run_id', $qaRunId)->findAll();
         $validations = (new ValidationResultsModel())->where('qa_run_id', $qaRunId)->findAll();
+        $decisions   = (new RunDecisionsModel())->where('qa_run_id', $qaRunId)->orderBy('created_at')->findAll();
 
         $resultsBySession = [];
         foreach ($results as $r) {
@@ -152,6 +156,7 @@ class ReportService
                 return $s;
             }, $sessions),
             'validations'  => $validations,
+            'decisions_taken' => $decisions,
             'generated_at' => gmdate('c'),
         ];
 
@@ -400,6 +405,7 @@ class ReportService
         $session   = $json['session'];
         $result    = $json['result'] ?? [];
         $valids    = $json['validations'] ?? [];
+        $decisionRows = $this->renderDecisionRows($json['decisions_taken'] ?? []);
         $valRows   = '';
         foreach ($valids as $v) {
             $ok = $v['passed'] ? 'pass' : 'fail';
@@ -422,6 +428,8 @@ class ReportService
                  <p>Severity: <span class="badge sev-%s">%s</span> · Status: <strong>%s</strong></p>
                  <h3>Validations</h3>
                  <table><thead><tr><th>Result</th><th>Rule</th><th>Severity</th><th>Expected</th><th>Actual</th><th>Notes</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>Decisions taken</h3>
+                 <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>
                  <h3>Result JSON</h3>
                  <pre>%s</pre>',
                 htmlspecialchars((string) $session['qa_run_id']),
@@ -432,6 +440,7 @@ class ReportService
                 htmlspecialchars((string) ($result['severity'] ?? 'low')),
                 htmlspecialchars((string) ($result['status'] ?? $session['status'])),
                 $valRows ?: '<tr><td colspan="6" class="muted">No validations recorded.</td></tr>',
+                $decisionRows,
                 htmlspecialchars(json_encode($result['result_json'] ?? [], JSON_PRETTY_PRINT))
             )
         );
@@ -456,6 +465,7 @@ class ReportService
             );
         }
         $sev = $totals['severity'] ?? [];
+        $decisionRows = $this->renderDecisionRows($json['decisions_taken'] ?? []);
         return $this->htmlShell(
             'QA Consolidated Report — ' . ($json['qa_run_id'] ?? ''),
             sprintf(
@@ -469,7 +479,9 @@ class ReportService
                     <div class="card critical"><div class="k">%d</div><div class="v">Critical</div></div>
                     <div class="card high"><div class="k">%d</div><div class="v">High</div></div>
                  </div>
-                 <table><thead><tr><th>#</th><th>Session</th><th>Module</th><th>Sub-module</th><th>Status</th><th>Severity</th></tr></thead><tbody>%s</tbody></table>',
+                 <table><thead><tr><th>#</th><th>Session</th><th>Module</th><th>Sub-module</th><th>Status</th><th>Severity</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>Decisions taken</h3>
+                 <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>',
                 htmlspecialchars($json['qa_run_id'] ?? ''),
                 htmlspecialchars($json['run']['product_name'] ?? ''),
                 htmlspecialchars($json['run']['environment'] ?? ''),
@@ -479,9 +491,29 @@ class ReportService
                 (int) ($totals['skipped'] ?? 0),
                 (int) ($sev['critical'] ?? 0),
                 (int) ($sev['high'] ?? 0),
-                $rows
+                $rows,
+                $decisionRows
             )
         );
+    }
+
+    private function renderDecisionRows(array $decisions): string
+    {
+        if ($decisions === []) {
+            return '<tr><td colspan="4" class="muted">No decisions were required.</td></tr>';
+        }
+        $rows = '';
+        foreach ($decisions as $decision) {
+            $rows .= sprintf(
+                '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                htmlspecialchars((string) ($decision['situation_key'] ?? '')),
+                htmlspecialchars((string) ($decision['selected_option'] ?? '—')),
+                htmlspecialchars(($decision['source'] ?? 'human') === 'memory' ? 'Remembered' : 'Human'),
+                htmlspecialchars((string) ($decision['status'] ?? ''))
+            );
+        }
+
+        return $rows;
     }
 
     private function htmlShell(string $title, string $body): string

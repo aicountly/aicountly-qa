@@ -57,6 +57,10 @@ $routes->group('v1', static function ($routes) {
         $routes->post('sessions/(:num)/result', 'Api\\V1\\WorkerController::postResult/$1');
         $routes->post('sessions/(:num)/evidence', 'Api\\V1\\WorkerController::uploadEvidence/$1');
         $routes->get('credentials/(:num)', 'Api\\V1\\WorkerController::credentials/$1');
+        $routes->post('decisions', 'Api\\V1\\WorkerController::createDecision');
+        $routes->get('decisions/(:num)', 'Api\\V1\\WorkerController::decision/$1');
+        $routes->post('decisions/(:num)/timeout', 'Api\\V1\\WorkerController::timeoutDecision/$1');
+        $routes->get('decision-memory', 'Api\\V1\\WorkerController::decisionMemory');
     });
 
     // Authenticated portal endpoints.
@@ -80,6 +84,9 @@ $routes->group('v1', static function ($routes) {
         $routes->resource('session-plans', ['controller' => 'Api\\V1\\SessionPlansController']);
         $routes->post('session-plans/(:num)/approve', 'Api\\V1\\SessionPlansController::approve/$1', ['filter' => 'role:Owner,QA Manager']);
 
+        $routes->get('runs/(:segment)/decisions', 'Api\\V1\\DecisionsController::index/$1', ['filter' => 'role:Owner,QA Manager']);
+        $routes->post('runs/(:segment)/decisions/(:num)/answer', 'Api\\V1\\DecisionsController::answer/$1/$2', ['filter' => 'role:Owner,QA Manager']);
+        $routes->get('runs/(:segment)/decisions/(:num)/screenshot', 'Api\\V1\\DecisionsController::screenshot/$1/$2', ['filter' => 'role:Owner,QA Manager']);
         $routes->resource('runs', ['controller' => 'Api\\V1\\RunsController']);
         $routes->get('sessions/(:num)/live', 'Api\\V1\\SessionsController::live/$1');
         // Prefer query ?filename=… — path URLs ending in .png are often intercepted by

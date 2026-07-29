@@ -150,7 +150,7 @@ The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` sessio
 4. Reviewer (Owner / QA Manager) edits / reorders / removes sessions, then Approves.
 5. Each approved session is enqueued in qa_sessions with status=queued.
 6. Worker polls /worker/next-session → claims oldest queued session.
-7. Worker logs into target app, runs steps, captures evidence, posts result.
+7. Worker logs in through identity → Jump To Smart Books → password, runs steps, captures evidence, and posts the result. OTP/2FA or ambiguous/unsafe paths can pause as `awaiting_decision`.
 8. API writes session report (HTML + JSON) under qa-reports/{product}/{date}/{qa_run_id}/.
 9. When no queued sessions remain, API builds the consolidated final report.
 10. Reports are surfaced in /qa-reports and /qa-runs/:id in the UI.
@@ -183,7 +183,22 @@ Both worker and API write under the same root (`QA_REPORTS_DIR`). The folder is 
 3. (Optional) Add a test data pack and expected results seeder under `server-php/app/Database/Seeds/`.
 4. (Optional) Add product-specific validation rules via `ValidationRulesSeeder`.
 
-No worker code changes are needed — the same `stepRunner.ts` consumes the JSON declaratively.
+The external runner consumes templates declaratively, but must be upgraded in `apis-aicountly` for every newly declared step kind. Current additions are `expect_login_outcome` for login-error capture and the Books File I/O kinds `ask_decision`, `file_import`, `expect_import_result`, `file_export`, `compare_file_roundtrip`, `file_upload_expect_rejected`, and `assert_file_upload_blocked`.
+
+## Mid-run operator decisions
+
+The worker first asks decision memory for the product/environment/situation. Valid remembered options are audited without pausing. Otherwise it creates a pending decision, the API sets the session to `awaiting_decision`, and the portal polls the run’s pending decisions. Owner or QA Manager answers with an option id, optional note, and optional remember flag; the API resumes the session to `running`/`claimed`.
+
+While paused, the worker must heartbeat its lease, poll the decision, and time it out after 30 minutes. It then executes the selected action and resumes or finishes. `abort_session` and `mark_blocked` always produce an Error Register entry. Reports include situation, selected choice, and whether a human or memory supplied it.
+
+The QA decision routes are:
+
+- Worker token: `POST /v1/worker/decisions`, `GET /v1/worker/decisions/{id}`, `POST /v1/worker/decisions/{id}/timeout`, `GET /v1/worker/decision-memory`.
+- Owner/QA Manager JWT: `GET /v1/runs/{qaRunId}/decisions`, `POST /v1/runs/{qaRunId}/decisions/{id}/answer`, `GET /v1/runs/{qaRunId}/decisions/{id}/screenshot`.
+
+## Shared worker host regression
+
+If `SMOKE_*` configuration or a smoke process is added to the shared worker host, verify both portals remain isolated by API URL/token, process name, poll loop, and report root. Then run the multi-portal checklist: QA Jump To login, Live Log heartbeat/progress, evidence upload, decision pause/answer/resume, Books sandbox File I/O, production upload refusal, and one smoke job. Restart each process independently and confirm neither claims the other portal’s jobs.
 
 ## Books — fully wired end-to-end session (proof point)
 

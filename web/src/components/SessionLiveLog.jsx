@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, getToken, v1 } from '../lib/api.js'
 import { StatusBadge } from './Badges.jsx'
+import PendingDecisionCard, { shouldPollDecisions } from './PendingDecisionCard.jsx'
 import { fmtDate } from '../lib/format.js'
+
+const LIVE_SESSION_STATUSES = ['queued', 'claimed', 'running', 'awaiting_decision']
 
 function useEvidenceBlob(sessionId, filename) {
   const [src, setSrc] = useState('')
@@ -174,7 +177,7 @@ export default function SessionLiveLog({
     enabled: !!sessionId,
     refetchInterval: (q) => {
       const status = q.state.data?.session?.status
-      return ['queued', 'claimed', 'running'].includes(status) ? 2000 : 8000
+      return LIVE_SESSION_STATUSES.includes(status) ? 2000 : 8000
     },
   })
 
@@ -182,8 +185,9 @@ export default function SessionLiveLog({
   const screenshots = live.data?.screenshots || []
   const status = live.data?.session?.status
   const outcome = live.data?.outcome
-  const isLive = ['queued', 'claimed', 'running'].includes(status)
+  const isLive = LIVE_SESSION_STATUSES.includes(status)
   const qaRunId = live.data?.session?.qa_run_id
+  const pollDecisions = shouldPollDecisions([status])
 
   useEffect(() => {
     if (autoScroll && logEndRef.current) {
@@ -246,6 +250,12 @@ export default function SessionLiveLog({
           </label>
         </div>
       </div>
+
+      {qaRunId && pollDecisions && (
+        <div className="shrink-0 border-b border-amber-200 bg-amber-50/30 px-4 py-3 sm:px-6 empty:hidden">
+          <PendingDecisionCard qaRunId={qaRunId} enabled />
+        </div>
+      )}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-5">
         <div className="min-h-0 overflow-y-auto bg-neutral-950 px-4 py-3 font-mono text-[12px] leading-relaxed text-neutral-100 lg:col-span-3">

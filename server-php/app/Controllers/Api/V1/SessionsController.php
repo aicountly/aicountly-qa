@@ -416,13 +416,17 @@ class SessionsController extends ResourceController
         $isLogin = $module === 'login'
             || str_contains(strtolower((string) ($session['template_code'] ?? '')), 'login');
 
-        if (in_array($status, ['queued', 'claimed', 'running'], true)) {
+        if (in_array($status, SessionsModel::ACTIVE, true)) {
             return [
                 'state'  => 'in_progress',
-                'label'  => $isLogin ? 'LOGIN IN PROGRESS' : 'SESSION IN PROGRESS',
-                'detail' => $isLogin
-                    ? 'Worker is signing in to Smart Books. Wait for LOGIN SUCCESSFUL or LOGIN FAILED.'
-                    : 'Worker is still executing this session.',
+                'label'  => $status === 'awaiting_decision'
+                    ? 'AWAITING DECISION'
+                    : ($isLogin ? 'LOGIN IN PROGRESS' : 'SESSION IN PROGRESS'),
+                'detail' => $status === 'awaiting_decision'
+                    ? 'Worker is paused safely until an Owner or QA Manager answers the pending decision.'
+                    : ($isLogin
+                        ? 'Worker is signing in using Jump To → Smart Books, then password. Complete any OTP challenge and wait for LOGIN SUCCESSFUL or LOGIN FAILED.'
+                        : 'Worker is still executing this session.'),
             ];
         }
 
@@ -454,7 +458,7 @@ class SessionsController extends ResourceController
                 'label'  => 'LOGIN FAILED',
                 'detail' => $fatal
                     ? (string) $fatal
-                    : 'Login did not complete successfully. Check credentials, login URL, and screenshots.',
+                    : 'Login did not complete successfully. Check credentials, Jump To → Smart Books, OTP/challenge state, login URL, and screenshots.',
             ];
         }
 

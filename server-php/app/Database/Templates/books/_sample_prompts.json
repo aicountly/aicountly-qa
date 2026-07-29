@@ -6,14 +6,14 @@
       "prompt": "Login only to Smart Books. Verify the login form accepts credentials and the app loads after sign-in. Do not run any other modules until login succeeds."
     },
     {
-      "name": "Smoke run (Books sandbox)",
+      "name": "Error pack (Books sandbox)",
       "kind": "template",
-      "prompt": "Login to Books sandbox. Verify dashboard loads, menus open, and report pages render without console errors. Do not create dummy data. Run as smoke check."
+      "prompt": "Run the Books sandbox error pack: accounting reconciliation, reports, deterministic File I/O correctness, console failures and unhandled API errors. Skip UX, theme and keyboard checks. Feature and UX checks belong on smoke.aicountly.org."
     },
     {
       "name": "Full functional run (Books sandbox)",
       "kind": "template",
-      "prompt": "Run a full functional QA on Books sandbox. Create deterministic ledgers, items, sales/purchase vouchers, payments, receipts. Open ledger, registers, GST reports, trial balance, P&L and balance sheet. Verify all totals against expected results. Capture screenshots, trace, console and network."
+      "prompt": "Run a full functional QA on Books sandbox. Create deterministic ledgers, items, sales/purchase vouchers, payments, receipts. Test deterministic File I/O after approval. Open ledger, registers, GST reports, trial balance, P&L and balance sheet. Verify all totals against expected results. Capture screenshots, trace, console and network. Skip UX/theme/keyboard; feature and UX checks belong on smoke.aicountly.org."
     },
     {
       "name": "GST reconciliation only (Books sandbox)",

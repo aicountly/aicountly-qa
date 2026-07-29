@@ -7,6 +7,9 @@ use Config\Services;
 
 class SessionsModel extends Model
 {
+    public const ACTIVE = ['queued', 'claimed', 'running', 'awaiting_decision'];
+    public const LEASED = ['claimed', 'running', 'awaiting_decision'];
+
     protected $table         = 'qa_sessions';
     protected $primaryKey    = 'id';
     protected $returnType    = 'array';
@@ -213,7 +216,7 @@ class SessionsModel extends Model
         foreach ($runIds as $qaRunId) {
             $remaining = (int) $this->db->table('qa_sessions')
                 ->where('qa_run_id', $qaRunId)
-                ->whereIn('status', ['queued', 'claimed', 'running'])
+                ->whereIn('status', self::ACTIVE)
                 ->countAllResults();
 
             if ($remaining === 0) {
@@ -258,7 +261,7 @@ class SessionsModel extends Model
         }
 
         $status = (string) ($session['status'] ?? '');
-        if (in_array($status, ['queued', 'claimed', 'running'], true)) {
+        if (in_array($status, self::ACTIVE, true)) {
             throw new \RuntimeException('Session is already queued or in progress.', 409);
         }
         if (! in_array($status, self::RERUNNABLE, true)) {
@@ -271,6 +274,14 @@ class SessionsModel extends Model
 
         $db->table('qa_session_results')->where('session_id', $sessionId)->delete();
         $db->table('qa_validation_results')->where('session_id', $sessionId)->delete();
+        try {
+            $db->table('qa_run_decisions')
+                ->where('session_id', $sessionId)
+                ->where('status', 'pending')
+                ->update(['status' => 'cancelled', 'updated_at' => date('Y-m-d H:i:s')]);
+        } catch (\Throwable $e) {
+            // Decisions table may not exist yet on older deploys.
+        }
         try {
             $db->table('qa_session_events')->where('session_id', $sessionId)->delete();
         } catch (\Throwable $e) {
