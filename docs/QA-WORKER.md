@@ -91,6 +91,28 @@ Firewall: the worker only makes **outbound** HTTPS to `qa.aicountly.org` and the
 | `~/aicountly-qa-worker/.env` | `QA_API_URL`, `QA_WORKER_TOKEN` (must match), `QA_WORKER_ID`, `QA_REPORTS_DIR`, `QA_HEADLESS` |
 | GitHub Actions | Existing `PROD_SSH_*`, `PROD_REMOTE_ROOT`, optional `PROD_WORKER_ROOT` — **no** worker token in GitHub |
 
+## AI Brain env vars
+
+The worker never holds a provider API key — `GEMINI_API_KEY` / `OPENAI_API_KEY`
+/ `PERPLEXITY_API_KEY` live only in `server-php/.env`, and `validateConfig()`
+(`worker/utils/config.ts`) hard-fails startup if any of the three leaks into
+the worker's own environment. The worker only controls *how* it runs, via:
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `QA_AGENT_MODE` | `template` | `template` = today's deterministic step-by-step execution (unchanged). `agent` = the vision agent loop drives the browser instead. |
+| `QA_MAX_SCREENS_PER_SESSION` | `60` | Safety ceiling on screens the vision agent may visit in one session (agent mode only). |
+| `QA_STEP_SCREENSHOT_RETENTION` | `120` | How many of the agent's per-step decision screenshots to keep on disk (agent mode only). |
+| `QA_FEATURE_GAP_ENABLED` | `false` | Enables the extra council call that compares the product against competitor catalogs and posts findings to `qa_feature_gaps`. Enrichment only, never affects pass/fail. |
+
+`template` mode is what every session has always run: `stepRunner.ts` executes
+the session template's declared steps in order. `agent` mode instead hands the
+browser to `agentLoop.ts`, which perceives the screen via Set-of-Marks and
+decides one action at a time, gated by a mandatory data-capture contract so
+that AI-driven exploration can't finish a session without ever having read
+the numbers under test. See [docs/QA-BRAIN.md](./QA-BRAIN.md) for the full
+architecture, provider routing, and rollback instructions.
+
 ## Runtime contracts
 
 Documented for agents and operators; implemented under `worker/`:

@@ -7,16 +7,19 @@ use App\Models\CredentialsModel;
 use App\Models\DecisionMemoryModel;
 use App\Models\ErrorRegisterModel;
 use App\Models\ExpectedResultsModel;
+use App\Models\FeatureGapsModel;
 use App\Models\FileIoTestsModel;
 use App\Models\RunsModel;
 use App\Models\RunDecisionsModel;
 use App\Models\SessionEventsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
+use App\Models\SettingsModel;
 use App\Models\TargetProfilesModel;
 use App\Models\TestDataPacksModel;
 use App\Models\ValidationResultsModel;
 use App\Models\ValidationRulesModel;
+use App\Services\Brain\BrainUnavailableException;
 use App\Services\WorkerStatusService;
 use Config\Environments;
 use Config\Products;
@@ -71,7 +74,9 @@ class WorkerController extends BaseApiController
         }
 
         $products = new Products();
+        $agentMode = (string) (new SettingsModel())->getSetting('brain.agent_mode', 'template');
         $runtimeContract = [
+            'agent_mode' => in_array($agentMode, ['agent', 'template'], true) ? $agentMode : 'template',
             'login' => [
                 'jump_to_candidates' => $products->jumpTargetsFor((string) ($profile['product_name'] ?? '')),
                 'jump_to_selectors'  => ['select#jumptoe', 'select[name=jumptoe]'],
@@ -341,6 +346,59 @@ class WorkerController extends BaseApiController
     }
 
     /**
+     * Proxies one Brain call for the worker's vision agent / council tasks.
+     * Provider keys never leave this API — the worker only ever sees this
+     * endpoint plus the final decision JSON.
+     */
+    public function brainInvoke()
+    {
+        $body = $this->input();
+        $task = (string) ($body['task'] ?? '');
+        $systemPrompt = (string) ($body['system_prompt'] ?? '');
+        $userPrompt = (string) ($body['user_prompt'] ?? '');
+        $context = is_array($body['context'] ?? null) ? $body['context'] : [];
+        $images = is_array($body['images'] ?? null) ? $body['images'] : [];
+
+        try {
+            $result = $images !== []
+                ? Services::brain()->invokeVision($task, $systemPrompt, $userPrompt, $images, $context)
+                : Services::brain()->invoke($task, $systemPrompt, $userPrompt, $context);
+        } catch (BrainUnavailableException $e) {
+            return $this->response->setStatusCode(503)->setJSON([
+                'ok'       => false,
+                'error'    => 'brain_unavailable',
+                'provider' => $e->provider ?? 'unknown',
+                'detail'   => $e->getMessage(),
+            ]);
+        }
+
+        return $this->ok($result);
+    }
+
+    /**
+     * Provider configuration health check, surfaced in Settings and used by the
+     * worker to pre-flight a session before it launches a browser.
+     */
+    public function brainHealth()
+    {
+        $providers = Services::brain()->providerHealth();
+        $visionAvailable = false;
+        foreach ($providers as $provider) {
+            if (! empty($provider['vision_capable'])
+                && ! empty($provider['enabled_for_vision'])
+                && ! empty($provider['configured'])) {
+                $visionAvailable = true;
+                break;
+            }
+        }
+
+        return $this->ok([
+            'vision_available' => $visionAvailable,
+            'vision_providers' => $providers,
+        ]);
+    }
+
+    /**
      * Worker posts live activity while executing a session (step text, progress).
      */
     public function progress(int $sessionId)
@@ -363,10 +421,15 @@ class WorkerController extends BaseApiController
             'last_heartbeat_at'  => date('Y-m-d H:i:s'),
         ]);
 
+        $eventType = trim((string) ($body['event_type'] ?? 'progress'));
+        if ($eventType === '') {
+            $eventType = 'progress';
+        }
+
         $this->recordEvent(
             $sessionId,
             (string) $session['qa_run_id'],
-            'progress',
+            $eventType,
             $message,
             [
                 'step_key'    => isset($body['step']) ? (string) $body['step'] : null,
@@ -724,6 +787,64 @@ class WorkerController extends BaseApiController
         );
 
         return $this->ok(['id' => $testId, 'file_io_test' => $tests->find($testId)], 201);
+    }
+
+    /**
+     * Worker posts heuristic + AI-refined feature-gap findings for one session
+     * (the ported feature_gap review). Enrichment only — the worker never lets
+     * this block a session, so failures here should not either.
+     */
+    public function postFeatureGaps(int $sessionId)
+    {
+        $session = (new SessionsModel())->find($sessionId);
+        if (! $session) {
+            return $this->fail('Session not found.', 404);
+        }
+
+        $body = $this->input();
+        $gaps = is_array($body['gaps'] ?? null) ? $body['gaps'] : [];
+        if ($gaps === []) {
+            return $this->fail('gaps is required and must be a non-empty array.', 400);
+        }
+
+        $run         = (new RunsModel())->find($session['qa_run_id']);
+        $productName = (string) ($run['product_name'] ?? 'unknown');
+
+        $model    = new FeatureGapsModel();
+        $inserted = [];
+        foreach ($gaps as $gap) {
+            if (! is_array($gap)) {
+                continue;
+            }
+            $expectedFeature = trim((string) ($gap['expected_feature'] ?? ''));
+            if ($expectedFeature === '') {
+                continue;
+            }
+            $id = $model->insert([
+                'qa_run_id'        => (string) $session['qa_run_id'],
+                'session_id'       => $sessionId,
+                'product_name'     => trim((string) ($gap['product_name'] ?? '')) !== '' ? (string) $gap['product_name'] : $productName,
+                'expected_feature' => $expectedFeature,
+                'observed'         => (bool) ($gap['observed'] ?? false),
+                'severity'         => (string) ($gap['severity'] ?? 'medium'),
+                'confidence'       => (string) ($gap['confidence'] ?? 'low'),
+                'recommendation'   => isset($gap['recommendation']) ? (string) $gap['recommendation'] : null,
+                'sources_json'     => is_array($gap['sources'] ?? null) ? $gap['sources'] : null,
+                'evidence_json'    => is_array($gap['evidence'] ?? null) ? $gap['evidence'] : null,
+                'created_at'       => date('Y-m-d H:i:s'),
+            ], true);
+            $inserted[] = (int) $id;
+        }
+
+        $this->recordEvent(
+            $sessionId,
+            (string) $session['qa_run_id'],
+            'feature_gaps',
+            'Recorded ' . count($inserted) . ' feature-gap finding(s).',
+            ['metadata' => ['count' => count($inserted)]]
+        );
+
+        return $this->ok(['inserted' => count($inserted), 'ids' => $inserted], 201);
     }
 
     /**

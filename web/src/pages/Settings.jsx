@@ -13,6 +13,12 @@ export default function Settings() {
     queryFn: async () => (await api.get(v1('/settings'))).data?.data ?? {},
   })
 
+  const brainHealth = useQuery({
+    queryKey: ['settings-brain-health'],
+    queryFn: async () => (await api.get(v1('/settings/brain-health'))).data?.data ?? {},
+    staleTime: 30_000,
+  })
+
   const [form, setForm] = useState({})
   useEffect(() => { if (data) setForm(data) }, [data])
 
@@ -25,6 +31,10 @@ export default function Settings() {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
+  function updateStringList(key, text) {
+    update(key, text.split(',').map((s) => s.trim()).filter(Boolean))
+  }
+
   return (
     <div className="space-y-4 max-w-3xl">
       {!canEdit && (
@@ -33,17 +43,92 @@ export default function Settings() {
         </div>
       )}
 
-      <Section title="LLM Provider (Session Planner)">
-        <Field label="Enabled">
-          <input type="checkbox" disabled={!canEdit} checked={!!form.llm_enabled} onChange={(e) => update('llm_enabled', e.target.checked)} />
-          <span className="ml-2 text-xs text-neutral-500">When off, plans are generated purely from deterministic templates.</span>
+      <Section title="AI Brain">
+        <Field label="Session mode">
+          <select
+            className="qa-input"
+            disabled={!canEdit}
+            value={form['brain.agent_mode'] || 'template'}
+            onChange={(e) => update('brain.agent_mode', e.target.value)}
+          >
+            <option value="template">Template (deterministic step execution)</option>
+            <option value="agent">Agent (vision agent decides each screen)</option>
+          </select>
+          <p className="mt-1 text-xs text-neutral-500">
+            Template runs the session's own pre-authored step list exactly as recorded. Agent instead
+            shows the vision model each screen and lets it decide the next click/type/capture action.
+          </p>
         </Field>
-        <Field label="Provider">
-          <input className="qa-input" disabled={!canEdit} value={form.llm_provider || ''} onChange={(e) => update('llm_provider', e.target.value)} placeholder="openai | anthropic | gemini" />
+        <Field label="Vision fallback order (screenshot review)">
+          <input
+            className="qa-input"
+            disabled={!canEdit}
+            value={(form['brain.vision_providers'] || []).join(', ')}
+            onChange={(e) => updateStringList('brain.vision_providers', e.target.value)}
+            placeholder="gemini, openai"
+          />
         </Field>
-        <Field label="Model">
-          <input className="qa-input" disabled={!canEdit} value={form.llm_model || ''} onChange={(e) => update('llm_model', e.target.value)} placeholder="e.g. gpt-4o-mini" />
+        <Field label="Council providers (text tasks)">
+          <input
+            className="qa-input"
+            disabled={!canEdit}
+            value={(form['brain.parallel_providers'] || []).join(', ')}
+            onChange={(e) => updateStringList('brain.parallel_providers', e.target.value)}
+            placeholder="openai, perplexity"
+          />
         </Field>
+        <Field label="Synthetic data provider order">
+          <input
+            className="qa-input"
+            disabled={!canEdit}
+            value={(form['brain.data_providers'] || []).join(', ')}
+            onChange={(e) => updateStringList('brain.data_providers', e.target.value)}
+            placeholder="perplexity, openai"
+          />
+        </Field>
+        <Field label="Default arbiter">
+          <input
+            className="qa-input"
+            disabled={!canEdit}
+            value={form['brain.default_arbiter'] || ''}
+            onChange={(e) => update('brain.default_arbiter', e.target.value)}
+            placeholder="gemini"
+          />
+        </Field>
+        <Field label="Timeout (seconds)">
+          <input
+            type="number"
+            className="qa-input"
+            disabled={!canEdit}
+            value={form['brain.timeout_seconds'] ?? ''}
+            onChange={(e) => update('brain.timeout_seconds', Number(e.target.value))}
+          />
+        </Field>
+        <Field label="Max screens per session (agent mode)">
+          <input
+            type="number"
+            className="qa-input"
+            disabled={!canEdit}
+            value={form['brain.max_screens_per_session'] ?? ''}
+            onChange={(e) => update('brain.max_screens_per_session', Number(e.target.value))}
+          />
+        </Field>
+
+        <div>
+          <label className="qa-label">Provider status</label>
+          {brainHealth.isLoading && <p className="text-xs text-neutral-500">Checking providers…</p>}
+          {brainHealth.isError && <p className="text-xs text-red-700">Could not load provider health.</p>}
+          {!brainHealth.isLoading && !brainHealth.isError && (
+            <div className="flex flex-wrap gap-2">
+              {(brainHealth.data?.providers || []).map((p) => (
+                <ProviderBadge key={p.name} provider={p} />
+              ))}
+              {(brainHealth.data?.providers || []).length === 0 && (
+                <span className="text-xs text-neutral-500">No provider data returned.</span>
+              )}
+            </div>
+          )}
+        </div>
       </Section>
 
       <Section title="flow.aicountly.org Ticket Integration">
@@ -90,6 +175,22 @@ function Field({ label, children }) {
     <div>
       <label className="qa-label">{label}</label>
       <div>{children}</div>
+    </div>
+  )
+}
+
+function ProviderBadge({ provider }) {
+  const configured = !!provider.configured
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs">
+      <span className={`h-2 w-2 rounded-full ${configured ? 'bg-aicountly-500' : 'bg-neutral-300'}`} />
+      <span className="font-medium text-neutral-900">{provider.name}</span>
+      <span className="text-neutral-500">{configured ? 'configured' : 'not configured'}</span>
+      {provider.vision_capable && (
+        <span className={provider.enabled_for_vision ? 'text-aicountly-700' : 'text-neutral-400'}>
+          · vision {provider.enabled_for_vision ? 'enabled' : 'available'}
+        </span>
+      )}
     </div>
   )
 }

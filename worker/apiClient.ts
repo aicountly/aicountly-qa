@@ -13,6 +13,7 @@ import type {
   NextSessionPayload,
   SessionPostBody,
 } from './types.js'
+import type { FeatureGapPayload } from './reviewer/featureGapEngine.js'
 import { config } from './utils/config.js'
 
 let client: AxiosInstance | null = null
@@ -76,6 +77,8 @@ export async function postProgress(
     step?: string
     step_index?: number
     total_steps?: number
+    /** Overrides the recorded qa_session_events.event_type (defaults to 'progress' server-side). */
+    event_type?: string
     metadata?: Record<string, unknown>
   },
 ): Promise<void> {
@@ -138,6 +141,14 @@ export async function uploadFileIoArtifact(testId: number, key: string, filePath
     headers: { 'X-Worker-Token': config.workerToken },
     maxContentLength: 50 * 1024 * 1024,
     maxBodyLength: 50 * 1024 * 1024,
+  })
+}
+
+/** Persist AI/heuristic feature-gap findings (enrichment only — never blocks a session). */
+export async function postFeatureGaps(sessionId: number, gaps: FeatureGapPayload[]): Promise<void> {
+  if (gaps.length === 0) return
+  await api().post(`/v1/worker/sessions/${sessionId}/feature-gaps`, { gaps }, {
+    params: workerParams(),
   })
 }
 

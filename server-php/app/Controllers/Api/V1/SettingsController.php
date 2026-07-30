@@ -4,6 +4,7 @@ namespace App\Controllers\Api\V1;
 
 use App\Controllers\BaseApiController;
 use App\Models\SettingsModel;
+use Config\Services;
 
 class SettingsController extends BaseApiController
 {
@@ -21,5 +22,15 @@ class SettingsController extends BaseApiController
         }
         $this->audit('settings_update', ['metadata' => ['keys' => array_keys($body)]]);
         return $this->ok((new SettingsModel())->all());
+    }
+
+    /**
+     * JWT-authenticated read of AI Brain provider health, so the Settings page
+     * can show live configured/vision-capable state without the browser ever
+     * holding the worker-only X-Worker-Token used by /worker/brain/health.
+     */
+    public function brainHealth()
+    {
+        return $this->ok(['providers' => Services::brain()->providerHealth()]);
     }
 }

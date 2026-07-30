@@ -47,6 +47,56 @@ class SettingsModel extends Model
         return $out;
     }
 
+    /**
+     * Read a setting expected to be a JSON array of strings. Non-string and
+     * empty entries are dropped; anything that does not decode to an array
+     * falls back to $default untouched.
+     *
+     * @param string[] $default
+     * @return string[]
+     */
+    public function getStringList(string $key, array $default = []): array
+    {
+        $value = $this->getSetting($key);
+        if (! is_array($value)) {
+            return $default;
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (! is_scalar($item)) {
+                continue;
+            }
+            $item = trim((string) $item);
+            if ($item !== '') {
+                $out[] = $item;
+            }
+        }
+        return $out;
+    }
+
+    public function getInt(string $key, int $default): int
+    {
+        $value = $this->getSetting($key);
+        return is_numeric($value) ? (int) $value : $default;
+    }
+
+    public function getBool(string $key, bool $default): bool
+    {
+        $value = $this->getSetting($key);
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_string($value)) {
+            return match ($value) {
+                'true', '1'  => true,
+                'false', '0' => false,
+                default      => $default,
+            };
+        }
+        return $default;
+    }
+
     /** @return mixed Decoded JSON scalar, array, or null. */
     private function decodeValue(mixed $raw): mixed
     {

@@ -9,9 +9,13 @@ class SettingsSeeder extends Seeder
     public function run(): void
     {
         $rows = [
-            ['key' => 'llm_enabled',             'value_json' => json_encode(false), 'description' => 'Enable LLM provider for session planner. Disabled by default.'],
-            ['key' => 'llm_provider',            'value_json' => json_encode(''),    'description' => 'openai|anthropic|gemini. Stored as opaque string.'],
-            ['key' => 'llm_model',               'value_json' => json_encode(''),    'description' => 'Model identifier (e.g. gpt-4o-mini, claude-3-5-sonnet).'],
+            ['key' => 'brain.vision_providers',   'value_json' => json_encode(['gemini', 'openai']), 'description' => 'Ordered vision-capable providers tried by the AI Brain for screenshot review.'],
+            ['key' => 'brain.parallel_providers', 'value_json' => json_encode(['openai', 'perplexity']), 'description' => 'Providers queried in parallel for the text council before arbitration.'],
+            ['key' => 'brain.data_providers',     'value_json' => json_encode(['perplexity', 'openai']), 'description' => 'Ordered providers tried sequentially for synthetic test-data generation.'],
+            ['key' => 'brain.default_arbiter',    'value_json' => json_encode('gemini'), 'description' => 'Provider that arbitrates the council\'s final decision.'],
+            ['key' => 'brain.timeout_seconds',    'value_json' => json_encode(60), 'description' => 'Per-provider request timeout in seconds for AI Brain calls.'],
+            ['key' => 'brain.agent_mode',         'value_json' => json_encode('template'), 'description' => 'agent|template. Whether sessions run the vision agent or the deterministic template step loop.'],
+            ['key' => 'brain.max_screens_per_session', 'value_json' => json_encode(60), 'description' => 'Safety ceiling on screens visited by the vision agent in one session.'],
             ['key' => 'flow_webhook_enabled',    'value_json' => json_encode(false), 'description' => 'Enable flow.aicountly.org ticket creation. Off by default.'],
             ['key' => 'flow_webhook_url',        'value_json' => json_encode(''),    'description' => 'flow.aicountly.org ticket webhook URL.'],
             ['key' => 'production_unlock',       'value_json' => json_encode(['enabled' => false, 'expires_at' => null, 'unlocked_by' => null]), 'description' => 'Owner-only per-run unlock for production writes.'],

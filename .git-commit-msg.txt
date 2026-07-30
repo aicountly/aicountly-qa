@@ -1,0 +1,9 @@
+Align QA with the smoke portal's three-provider AI brain
+
+Ports Gemini/GPT-4o-mini vision review, OpenAI+Perplexity council
+tasks, and the vision-agent execution loop into QA, gated behind a
+new brain.agent_mode setting (default: template, unchanged behavior).
+Adds a mandatory capture contract so the vision agent still satisfies
+QA's data-quality validations rather than free-exploring like smoke's
+report-verification agent. Includes AI step telemetry, Settings/report
+UI, feature-gap tracking, and docs/QA-BRAIN.md.

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, getToken, v1 } from '../lib/api.js'
 import { StatusBadge } from './Badges.jsx'
 import PendingDecisionCard, { shouldPollDecisions } from './PendingDecisionCard.jsx'
-import { fmtDate } from '../lib/format.js'
+import { classNames, fmtDate } from '../lib/format.js'
 
 const LIVE_SESSION_STATUSES = ['queued', 'claimed', 'running', 'awaiting_decision']
 
@@ -158,6 +158,82 @@ function ImageLightbox({ src, filename, onClose }) {
   )
 }
 
+const AI_OUTCOME_STYLES = {
+  executed: 'bg-aicountly-500/15 text-aicountly-300',
+  refused: 'bg-amber-500/15 text-amber-300',
+  failed: 'bg-red-500/15 text-red-300',
+  terminal: 'bg-neutral-500/15 text-neutral-300',
+}
+
+/** Compact "type (mark N)" / "capture_table → key" label for an ai_step action. */
+function describeAiAction(action) {
+  if (!action || typeof action !== 'object') return '—'
+  const type = action.type || 'action'
+  if (type === 'capture_table' && action.key) return `capture_table → ${action.key}`
+  if (action.mark != null) return `${type} (mark ${action.mark})`
+  if (type === 'type' && action.text) return `type "${action.text}"`
+  if (type === 'navigate' && action.url) return `navigate → ${action.url}`
+  if (type === 'press' && action.key) return `press ${action.key}`
+  return type
+}
+
+function AiStepCard({ ev }) {
+  const [expanded, setExpanded] = useState(false)
+  const meta = ev.metadata || {}
+  const outcome = meta.outcome || ''
+  const provider = meta.provider
+  const model = meta.model
+  const latency = meta.latency_ms
+
+  return (
+    <div className="mb-2 rounded-lg border border-white/10 bg-white/[0.03] p-2 last:border-0">
+      <div className="flex flex-wrap items-center gap-2 text-neutral-400">
+        <span>[{fmtDate(ev.created_at) || '—'}]</span>
+        {ev.step_index != null ? <span className="text-neutral-300">Screen {ev.step_index}</span> : null}
+        <span className="font-mono text-aicountly-300">{describeAiAction(meta.action)}</span>
+        {outcome ? (
+          <span className={classNames('rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide', AI_OUTCOME_STYLES[outcome] || 'bg-neutral-500/15 text-neutral-300')}>
+            {outcome}
+          </span>
+        ) : null}
+        {meta.captured_key ? (
+          <span className="rounded-full bg-aicountly-500/15 px-1.5 py-0.5 text-[10px] text-aicountly-300">
+            captured: {meta.captured_key}
+          </span>
+        ) : null}
+      </div>
+
+      {(meta.observation || meta.reasoning) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 block w-full text-left text-neutral-300"
+        >
+          {meta.observation && (
+            <div className={expanded ? 'whitespace-pre-wrap' : 'line-clamp-3'}>{meta.observation}</div>
+          )}
+          {meta.reasoning && (
+            <div className={`mt-0.5 text-neutral-500 ${expanded ? 'whitespace-pre-wrap' : 'line-clamp-3'}`}>
+              {meta.reasoning}
+            </div>
+          )}
+          <span className="text-[11px] text-aicountly-400 hover:underline">
+            {expanded ? 'Show less' : 'Show more'}
+          </span>
+        </button>
+      )}
+
+      {(provider || latency != null) && (
+        <div className="mt-1 text-[11px] text-neutral-500">
+          {provider ? `${provider}${model ? ` · ${model}` : ''}` : null}
+          {provider && latency != null ? ' · ' : null}
+          {latency != null ? `${latency}ms` : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * Full-page session live log: logs (left) + screenshots (right).
  */
@@ -274,18 +350,22 @@ export default function SessionLiveLog({
             </div>
           )}
           {events.map((ev, i) => (
-            <div key={ev.id ?? i} className="mb-2 border-b border-white/5 pb-2 last:border-0">
-              <div className="text-neutral-500">
-                [{fmtDate(ev.created_at) || '—'}]
-                {ev.event_type ? <span className="ml-1 text-aicountly-300">{ev.event_type}</span> : null}
-                {ev.step_index != null && ev.total_steps != null ? (
-                  <span className="ml-1 text-neutral-400">
-                    step {ev.step_index}/{ev.total_steps}
-                  </span>
-                ) : null}
+            ev.event_type === 'ai_step' ? (
+              <AiStepCard key={ev.id ?? i} ev={ev} />
+            ) : (
+              <div key={ev.id ?? i} className="mb-2 border-b border-white/5 pb-2 last:border-0">
+                <div className="text-neutral-500">
+                  [{fmtDate(ev.created_at) || '—'}]
+                  {ev.event_type ? <span className="ml-1 text-aicountly-300">{ev.event_type}</span> : null}
+                  {ev.step_index != null && ev.total_steps != null ? (
+                    <span className="ml-1 text-neutral-400">
+                      step {ev.step_index}/{ev.total_steps}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="whitespace-pre-wrap text-neutral-100">{ev.message}</div>
               </div>
-              <div className="whitespace-pre-wrap text-neutral-100">{ev.message}</div>
-            </div>
+            )
           ))}
           <div ref={logEndRef} />
         </div>

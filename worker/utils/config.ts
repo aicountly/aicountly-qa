@@ -54,6 +54,20 @@ export const config = {
   slowMo: int('QA_SLOWMO_MS', 0),
   packageName: WORKER_PACKAGE_NAME,
   banner: WORKER_BANNER,
+  /**
+   * 'template' | 'agent'. Follow-up wiring: once the backend brain.agent_mode
+   * setting ships, prefer a pass-through field on the next-session payload
+   * over this env var — see sessionRunner.ts's resolveAgentMode().
+   */
+  agentMode: (process.env.QA_AGENT_MODE || 'template').trim().toLowerCase(),
+  maxScreensPerSession: int('QA_MAX_SCREENS_PER_SESSION', 60),
+  stepScreenshotRetention: int('QA_STEP_SCREENSHOT_RETENTION', 120),
+  /**
+   * Off by default: the feature-gap review (competitor comparison) makes an
+   * extra AI council call per session. Same backend-settings-pass-through
+   * limitation as agentMode above — env var only until a real setting ships.
+   */
+  featureGapEnabled: bool('QA_FEATURE_GAP_ENABLED', false),
 }
 
 export function validateConfig(): string[] {
@@ -66,6 +80,13 @@ export function validateConfig(): string[] {
   }
   if (process.env.WORKER_BACKEND_URL) {
     errs.push('WORKER_BACKEND_URL is set — this dedicated QA worker uses QA_API_URL only')
+  }
+  // Provider keys belong only in server-php/.env; the worker proxies AI calls
+  // through the QA API and must never hold a key that could call a provider directly.
+  for (const key of ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'PERPLEXITY_API_KEY']) {
+    if (process.env[key]) {
+      errs.push(`${key} is set on the worker — provider keys belong only in server-php/.env; the worker proxies via QA_API_URL`)
+    }
   }
   return errs
 }

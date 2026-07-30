@@ -6,7 +6,8 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright'
 
-import { fetchCredentials, fetchNextSession, heartbeat, postProgress, postResult, uploadEvidence } from '../apiClient.js'
+import type { Page } from 'playwright'
+import { fetchCredentials, fetchNextSession, heartbeat, postFeatureGaps, postProgress, postResult, uploadEvidence } from '../apiClient.js'
 import { loginToTarget } from '../auth/login.js'
 import { selectOrCreateCompany } from '../context/companyContext.js'
 import { selectOrCreateBranch } from '../context/branchContext.js'
@@ -24,14 +25,25 @@ import { runUiChecks } from '../validation/uiValidation.js'
 import { config } from '../utils/config.js'
 import { interpolate, dateFromRunId } from '../utils/runId.js'
 import { SafeActionBlocked, type GuardContext } from '../utils/safeActionGuard.js'
+import { evaluateHostGuard } from '../utils/hostGuard.js'
 import { normalizeEnvironment, templateKeys } from '../utils/environments.js'
 import { runFileIoScenarios, shouldRunFileIo } from '../fileIo/fileIoEngine.js'
+import { runAgentLoop, type AgentLoopResult } from '../agent/agentLoop.js'
+import type { AgentStepRecord } from '../agent/actions.js'
+import { runFeatureGapReview } from '../reviewer/competitorComparison.js'
+import { toFeatureGapPayload } from '../reviewer/featureGapEngine.js'
+import { runDataQualityReview, mergeFindingsIntoPrompts } from '../reviewer/dataQualityBrain.js'
 import type {
+  ExpectedRow,
   FileIoTestPayload,
   NextSessionPayload,
+  Run,
+  RuntimeContract,
+  Session,
   ValidationResult,
   SessionPostBody,
   Severity,
+  TargetProfile,
   TemplateStep,
 } from '../types.js'
 
@@ -98,6 +110,8 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
   let safeGuardMessage = ''
   let selectedJumpTo: { label: string; value: string } | undefined
   let hostMatchFailed: ValidationResult | null = null
+  let agentContractUnmet: ValidationResult | null = null
+  let agentSteps: AgentStepRecord[] | undefined
 
   const templateDrivesLogin = templateStepsDriveLogin(template?.steps)
   let password = ''
@@ -171,75 +185,101 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
         fy_end: (data['financial_year'] as { end: string } | undefined)?.end ?? '',
       })
       : []
-
-    let stepIdx = 0
     const stepList = steps as TemplateStep[]
-    const totalSteps = stepList.length
-    for (const stRaw of stepList) {
-      const st = hydrateItems(stRaw as unknown as Record<string, unknown>, data) as TemplateStep
-      try {
-        await postProgress(session.id, {
-          message: `Step ${stepIdx + 1}/${totalSteps}: ${String(st.kind)}`,
-          step: String(st.kind),
-          step_index: stepIdx + 1,
-          total_steps: totalSteps,
-        }).catch(() => null)
 
-        const r = await runStep(st, ++stepIdx, {
-          page,
-          guard,
-          tables,
-          qaRunId: session.qa_run_id,
-          session,
-          run,
-          profile,
-          runtimeContract: runtime_contract,
-          sessionDir: dir,
-          exports: exportsMap,
-          selectedJumpTo,
-        })
-        if (r.data && typeof r.data === 'object' && 'selected_jump_to' in (r.data as object)) {
-          /* keep */
-        }
-        if (st.kind === 'select' && r.detail?.includes('=')) {
-          const label = r.detail.split('=').slice(1).join('=')
-          selectedJumpTo = selectedJumpTo || { label, value: label }
-        }
-        stepResults.push(r)
+    const agentMode = resolveAgentMode(payload)
+    if (agentMode === 'agent') {
+      const agentRun = await runSessionInAgentMode({
+        page,
+        session,
+        run,
+        profile,
+        guard,
+        tables,
+        template,
+        expected,
+        runtimeContract: runtime_contract,
+        suggestedPath: stepList,
+        screenshotsDir: dir,
+        screenshots,
+      })
+      stepResults.push(agentRun.stepResult)
+      agentSteps = agentRun.agentSteps
+      if (agentRun.hostMismatch) hostMatchFailed = agentRun.hostMismatch
+      if (agentRun.contractUnmet) agentContractUnmet = agentRun.contractUnmet
+      if (agentRun.blocked) {
+        blockedBySafeGuard = true
+        safeGuardMessage = agentRun.blockedReason ?? safeGuardMessage
+      }
+    } else {
+      let stepIdx = 0
+      const totalSteps = stepList.length
+      for (const stRaw of stepList) {
+        const st = hydrateItems(stRaw as unknown as Record<string, unknown>, data) as TemplateStep
+        try {
+          await postProgress(session.id, {
+            message: `Step ${stepIdx + 1}/${totalSteps}: ${String(st.kind)}`,
+            step: String(st.kind),
+            step_index: stepIdx + 1,
+            total_steps: totalSteps,
+          }).catch(() => null)
 
-        if (r.data && typeof r.data === 'object' && (r.data as { rule_code?: string }).rule_code === 'AUTH_PRODUCT_HOST_MATCH') {
-          hostMatchFailed = {
-            rule_code: 'AUTH_PRODUCT_HOST_MATCH',
-            passed: false,
-            severity: 'critical',
-            notes: r.error,
-            actual: String((r.data as { actual_host?: string }).actual_host || page.url()),
-            expected: String((r.data as { expected_host?: string }).expected_host || profile.base_url),
+          const r = await runStep(st, ++stepIdx, {
+            page,
+            guard,
+            tables,
+            qaRunId: session.qa_run_id,
+            session,
+            run,
+            profile,
+            runtimeContract: runtime_contract,
+            sessionDir: dir,
+            exports: exportsMap,
+            selectedJumpTo,
+          })
+          if (r.data && typeof r.data === 'object' && 'selected_jump_to' in (r.data as object)) {
+            /* keep */
           }
-          await screenshots.take(page, 'wrong-product-host')
-          break
-        }
+          if (st.kind === 'select' && r.detail?.includes('=')) {
+            const label = r.detail.split('=').slice(1).join('=')
+            selectedJumpTo = selectedJumpTo || { label, value: label }
+          }
+          stepResults.push(r)
 
-        if (!r.ok) {
-          await screenshots.take(page, `step-${stepIdx}-failed`)
-          if (st.kind === 'expect_login_outcome' || st.kind === 'expect_product_host') break
-        }
-        if (r.abortSession) break
-        if (r.skipRemaining) {
-          stepResults.push({ index: stepIdx, kind: 'skipped_remaining', ok: true, detail: 'operator skipped remaining file I/O' })
+          if (r.data && typeof r.data === 'object' && (r.data as { rule_code?: string }).rule_code === 'AUTH_PRODUCT_HOST_MATCH') {
+            hostMatchFailed = {
+              rule_code: 'AUTH_PRODUCT_HOST_MATCH',
+              passed: false,
+              severity: 'critical',
+              notes: r.error,
+              actual: String((r.data as { actual_host?: string }).actual_host || page.url()),
+              expected: String((r.data as { expected_host?: string }).expected_host || profile.base_url),
+            }
+            await screenshots.take(page, 'wrong-product-host')
+            break
+          }
+
+          if (!r.ok) {
+            await screenshots.take(page, `step-${stepIdx}-failed`)
+            if (st.kind === 'expect_login_outcome' || st.kind === 'expect_product_host') break
+          }
+          if (r.abortSession) break
+          if (r.skipRemaining) {
+            stepResults.push({ index: stepIdx, kind: 'skipped_remaining', ok: true, detail: 'operator skipped remaining file I/O' })
+            break
+          }
+        } catch (err) {
+          if (err instanceof SafeActionBlocked) {
+            blockedBySafeGuard = true
+            safeGuardMessage = err.message
+            stepResults.push({ index: stepIdx, kind: String(st.kind), ok: false, error: err.message })
+            await screenshots.take(page, `step-${stepIdx}-safeguard-blocked`)
+            break
+          }
+          stepResults.push({ index: stepIdx, kind: String(st.kind), ok: false, error: (err as Error)?.message ?? String(err) })
+          await screenshots.take(page, `step-${stepIdx}-error`)
           break
         }
-      } catch (err) {
-        if (err instanceof SafeActionBlocked) {
-          blockedBySafeGuard = true
-          safeGuardMessage = err.message
-          stepResults.push({ index: stepIdx, kind: String(st.kind), ok: false, error: err.message })
-          await screenshots.take(page, `step-${stepIdx}-safeguard-blocked`)
-          break
-        }
-        stepResults.push({ index: stepIdx, kind: String(st.kind), ok: false, error: (err as Error)?.message ?? String(err) })
-        await screenshots.take(page, `step-${stepIdx}-error`)
-        break
       }
     }
     if (!blockedBySafeGuard && shouldRunFileIo(session)) {
@@ -278,6 +318,26 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
       }
     }
 
+    if (config.featureGapEnabled) {
+      try {
+        const gaps = await runFeatureGapReview({
+          page,
+          session,
+          run,
+          profile,
+          tables,
+          moduleName: session.module ?? undefined,
+        })
+        if (gaps.length > 0) {
+          await postFeatureGaps(session.id, gaps.map(toFeatureGapPayload)).catch((err) => {
+            console.warn(`[${config.packageName}] postFeatureGaps failed:`, (err as Error)?.message)
+          })
+        }
+      } catch (err) {
+        console.warn(`[${config.packageName}] feature-gap review skipped:`, (err as Error)?.message ?? String(err))
+      }
+    }
+
     await screenshots.take(page, 'final-state')
   } catch (err) {
     stepResults.push({ index: 0, kind: 'fatal', ok: false, error: (err as Error)?.message ?? String(err) })
@@ -301,12 +361,24 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
 
   let validations: ValidationResult[] = [...acc, ...rep, ...ui, ...fileIoValidations]
   if (hostMatchFailed) validations = [hostMatchFailed, ...validations]
+  if (agentContractUnmet) validations = [agentContractUnmet, ...validations]
   if (blockedBySafeGuard) {
     validations = [
       { rule_code: 'SAFE_ACTION_GUARD', passed: false, severity: 'critical' as Severity, notes: safeGuardMessage },
       ...validations,
     ]
   }
+
+  // Enrichment only — runDataQualityReview() never throws (any brain failure resolves to []).
+  const dataQualityFindings = await runDataQualityReview({
+    tables,
+    expected,
+    validations,
+    product: profile.product_name,
+    environment: String(profile.environment),
+    sessionName: session.name,
+  })
+  validations = mergeFindingsIntoPrompts(validations, dataQualityFindings)
 
   const completedAt = new Date().toISOString()
   const report = await buildSessionReport({
@@ -350,6 +422,20 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
         index: s.index,
         data: s.data ?? null,
       })),
+      ...(agentSteps ? { agent_steps: agentSteps.map((s) => ({
+        ordinal: s.ordinal,
+        action: s.action,
+        outcome: s.outcome,
+        outcome_observation: s.outcome_observation,
+        observation: s.observation,
+        reasoning: s.reasoning,
+        goal_progress: s.goal_progress,
+        captured_key: s.captured_key ?? null,
+        signature_changed: s.signature_changed,
+        provider: s.provider ?? null,
+        model: s.model ?? null,
+        latency_ms: s.latency_ms ?? null,
+      })) } : {}),
     },
     screenshot_paths: screenshots.paths(),
     trace_path: tracePath,
@@ -398,6 +484,202 @@ function pickStepsForEnv(
     if (Array.isArray(byEnv) && byEnv.length) return byEnv
   }
   return template.steps || []
+}
+
+/**
+ * `brain.agent_mode` lookup. WorkerController::nextSession() reads the
+ * `brain.agent_mode` setting and puts it on `runtime_contract.agent_mode`, so
+ * that takes priority. The top-level payload is still checked as a secondary
+ * hint for forward-compatibility, and QA_AGENT_MODE (default 'template')
+ * remains the final fallback for older server builds or local dev without a
+ * seeded setting.
+ */
+function resolveAgentMode(payload: NextSessionPayload): 'agent' | 'template' {
+  const contractHint = (payload.runtime_contract as unknown as Record<string, unknown> | null | undefined)?.['agent_mode']
+  const payloadHint = (payload as unknown as Record<string, unknown>)['agent_mode']
+  const hint = contractHint ?? payloadHint
+  if (hint === 'agent' || hint === 'template') return hint
+  return config.agentMode === 'agent' ? 'agent' : 'template'
+}
+
+/** Rule codes from validations[] plus expected-result metric keys, deduped. */
+function buildCaptureContract(template: NextSessionPayload['template'], expected: ExpectedRow[]): string[] {
+  const fromValidations = template?.validations ?? []
+  const fromExpected = expected.map((row) => row.metric_key)
+  return [...new Set([...fromValidations, ...fromExpected])].filter(Boolean)
+}
+
+function buildAgentGoal(session: Session, template: NextSessionPayload['template']): string {
+  const scope = [session.module, session.sub_module].filter(Boolean).join(' / ') || 'whole application'
+  const description = template?.description ? ` ${template.description}` : ''
+  return `QA data-quality session "${session.name}". Scope: ${scope}.${description}`.trim()
+}
+
+/**
+ * Equivalent of stepRunner.ts's expectProductHost() step, run explicitly
+ * before the agent loop since agent mode never executes template steps.
+ * Duplicated in miniature rather than exported, per the plan's preference
+ * for leaving stepRunner.ts's template-mode path untouched.
+ */
+async function ensureProductHost(
+  page: Page,
+  profile: TargetProfile,
+  runtimeContract?: RuntimeContract | null,
+): Promise<ValidationResult | null> {
+  const baseUrl = String(runtimeContract?.post_login_host_guard?.expected_base_url || profile.base_url)
+  const allowed = runtimeContract?.post_login_host_guard?.allowed_domains ?? profile.allowed_domains
+  const rule = String(runtimeContract?.post_login_host_guard?.validation_rule || 'AUTH_PRODUCT_HOST_MATCH')
+
+  let result = evaluateHostGuard({ currentUrl: page.url(), baseUrl, allowedDomains: allowed })
+  if (!result.ok && baseUrl) {
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {})
+    await page.waitForTimeout(400)
+    result = evaluateHostGuard({ currentUrl: page.url(), baseUrl, allowedDomains: allowed })
+  }
+  if (result.ok) return null
+  return {
+    rule_code: rule,
+    passed: false,
+    severity: 'critical',
+    notes: result.message,
+    actual: result.actualHost,
+    expected: result.expectedHost,
+  }
+}
+
+/**
+ * Runs the vision agent in place of the template step loop. Maps
+ * AgentLoopResult onto the same StepResult/ValidationResult shapes the rest
+ * of runOneSession already composes, so downstream validation/report code
+ * needs no further changes.
+ */
+async function runSessionInAgentMode(input: {
+  page: Page
+  session: Session
+  run: Run
+  profile: TargetProfile
+  guard: GuardContext
+  tables: Record<string, Array<Record<string, string>>>
+  template: NextSessionPayload['template']
+  expected: ExpectedRow[]
+  runtimeContract?: RuntimeContract | null
+  suggestedPath: TemplateStep[]
+  screenshotsDir: string
+  screenshots: ScreenshotCapture
+}): Promise<{
+  stepResult: StepResult
+  hostMismatch: ValidationResult | null
+  contractUnmet: ValidationResult | null
+  blocked: boolean
+  blockedReason?: string
+  agentSteps?: AgentStepRecord[]
+}> {
+  const hostMismatch = await ensureProductHost(input.page, input.profile, input.runtimeContract)
+  if (hostMismatch) {
+    await input.screenshots.take(input.page, 'wrong-product-host').catch(() => null)
+    return {
+      stepResult: { index: 1, kind: 'agent_loop', ok: false, error: hostMismatch.notes ?? 'wrong product host' },
+      hostMismatch,
+      contractUnmet: null,
+      blocked: false,
+    }
+  }
+
+  const captureContract = buildCaptureContract(input.template, input.expected)
+  const goal = buildAgentGoal(input.session, input.template)
+
+  let result: AgentLoopResult
+  try {
+    result = await runAgentLoop({
+      page: input.page,
+      session: input.session,
+      run: input.run,
+      profile: input.profile,
+      guard: input.guard,
+      goal,
+      budget: config.maxScreensPerSession,
+      screenshotsDir: input.screenshotsDir,
+      suggestedPath: input.suggestedPath,
+      captureContract,
+      tables: input.tables,
+      onStep: async (step) => {
+        await postProgress(input.session.id, {
+          message: `Screen ${step.ordinal}: ${step.action.type} -> ${step.outcome}`,
+          step: 'agent_step',
+          step_index: step.ordinal,
+          event_type: 'ai_step',
+          metadata: {
+            action: step.action,
+            outcome: step.outcome,
+            outcome_observation: step.outcome_observation,
+            observation: step.observation,
+            reasoning: step.reasoning,
+            goal_progress: step.goal_progress,
+            blockers: step.blockers,
+            guard: step.guard,
+            target_label: step.target_label,
+            typed_value: step.typed_value ?? null,
+            captured_key: step.captured_key ?? null,
+            signature_changed: step.signature_changed,
+            provider: step.provider ?? null,
+            model: step.model ?? null,
+            latency_ms: step.latency_ms ?? null,
+            usage: step.usage ?? null,
+          },
+        }).catch(() => null)
+      },
+      onLoopWarning: async (message) => {
+        await postProgress(input.session.id, { message, step: 'agent_loop_warning' }).catch(() => null)
+      },
+    })
+  } catch (err) {
+    await input.screenshots.take(input.page, 'agent-loop-fatal').catch(() => null)
+    return {
+      stepResult: {
+        index: 1,
+        kind: 'agent_loop',
+        ok: false,
+        error: (err as Error)?.message ?? String(err),
+      },
+      hostMismatch: null,
+      contractUnmet: null,
+      blocked: false,
+    }
+  }
+
+  const stepResult: StepResult = {
+    index: 1,
+    kind: 'agent_loop',
+    ok: result.status === 'done',
+    detail: `status=${result.status}; screens=${result.screenCount}; reason=${result.reason}`,
+    data: { status: result.status, screen_count: result.screenCount, step_count: result.steps.length },
+  }
+
+  if (result.status === 'blocked') {
+    await input.screenshots.take(input.page, 'agent-loop-blocked').catch(() => null)
+    return {
+      stepResult,
+      hostMismatch: null,
+      contractUnmet: null,
+      blocked: true,
+      blockedReason: result.reason,
+      agentSteps: result.steps,
+    }
+  }
+
+  if (result.status === 'contract_unmet') {
+    await input.screenshots.take(input.page, 'agent-loop-contract-unmet').catch(() => null)
+    const contractUnmet: ValidationResult = {
+      rule_code: 'AI_CAPTURE_CONTRACT',
+      passed: false,
+      severity: 'high',
+      notes: result.reason,
+      expected: captureContract.join(', '),
+    }
+    return { stepResult, hostMismatch: null, contractUnmet, blocked: false, agentSteps: result.steps }
+  }
+
+  return { stepResult, hostMismatch: null, contractUnmet: null, blocked: false, agentSteps: result.steps }
 }
 
 function summariseFileIo(tests: FileIoTestPayload[]): Record<string, number | null> {

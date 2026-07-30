@@ -58,11 +58,14 @@ $routes->group('v1', static function ($routes) {
         $routes->post('sessions/(:num)/evidence', 'Api\\V1\\WorkerController::uploadEvidence/$1');
         $routes->post('sessions/(:num)/file-io', 'Api\\V1\\WorkerController::postFileIo/$1');
         $routes->post('file-io/(:num)/artifact', 'Api\\V1\\WorkerController::uploadFileIoArtifact/$1');
+        $routes->post('sessions/(:num)/feature-gaps', 'Api\\V1\\WorkerController::postFeatureGaps/$1');
         $routes->get('credentials/(:num)', 'Api\\V1\\WorkerController::credentials/$1');
         $routes->post('decisions', 'Api\\V1\\WorkerController::createDecision');
         $routes->get('decisions/(:num)', 'Api\\V1\\WorkerController::decision/$1');
         $routes->post('decisions/(:num)/timeout', 'Api\\V1\\WorkerController::timeoutDecision/$1');
         $routes->get('decision-memory', 'Api\\V1\\WorkerController::decisionMemory');
+        $routes->post('brain/invoke', 'Api\\V1\\WorkerController::brainInvoke');
+        $routes->get('brain/health', 'Api\\V1\\WorkerController::brainHealth');
     });
 
     // Authenticated portal endpoints.
@@ -128,6 +131,7 @@ $routes->group('v1', static function ($routes) {
 
         $routes->get('settings', 'Api\\V1\\SettingsController::index', ['filter' => 'role:Owner,QA Manager']);
         $routes->put('settings', 'Api\\V1\\SettingsController::update', ['filter' => 'role:Owner']);
+        $routes->get('settings/brain-health', 'Api\\V1\\SettingsController::brainHealth', ['filter' => 'role:Owner,QA Manager']);
 
         $routes->get('audit-logs', 'Api\\V1\\AuditLogsController::index');
 

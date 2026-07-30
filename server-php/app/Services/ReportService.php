@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\FeatureGapsModel;
 use App\Models\FileIoTestsModel;
 use App\Models\RunDecisionsModel;
 use App\Models\ReportsModel;
@@ -38,6 +39,14 @@ class ReportService
             (array) ($resultJson['failed_steps'] ?? []),
             static fn ($step): bool => is_array($step)
         ));
+        // Vision-agent run trace, when this session executed in agent mode. Absent
+        // (or not yet emitted by the worker) simply means no "AI Agent Timeline"
+        // section is rendered — never an error condition.
+        $agentSteps = array_values(array_filter(
+            (array) ($resultJson['agent_steps'] ?? []),
+            static fn ($step): bool => is_array($step)
+        ));
+        $featureGaps = (new FeatureGapsModel())->forSession($sessionId);
 
         $json = [
             'qa_run_id'        => $session['qa_run_id'],
@@ -51,6 +60,8 @@ class ReportService
             ],
             'result'           => $result,
             'failed_steps'     => $failedSteps,
+            'agent_steps'      => $agentSteps,
+            'feature_gaps'     => $featureGaps,
             'validations'      => $validations,
             'decisions_taken'  => $decisions,
             'file_io_tests'    => $fileIo,
@@ -179,6 +190,7 @@ class ReportService
         $validations = (new ValidationResultsModel())->where('qa_run_id', $qaRunId)->findAll();
         $decisions   = (new RunDecisionsModel())->where('qa_run_id', $qaRunId)->orderBy('created_at')->findAll();
         $fileIo      = (new FileIoTestsModel())->forRun($qaRunId);
+        $featureGaps = (new FeatureGapsModel())->forRun($qaRunId);
         $reports     = (new ReportsModel())->where('qa_run_id', $qaRunId)->where('kind', 'session')->findAll();
 
         $resultsBySession = [];
@@ -193,6 +205,7 @@ class ReportService
         }
 
         $totals = $this->summarise($sessions, $results, $validations);
+        $agentModeStats = $this->summariseAgentMode($results);
 
         $json = [
             'qa_run_id'    => $qaRunId,
@@ -221,6 +234,8 @@ class ReportService
             'decisions_taken' => $decisions,
             'file_io_tests'   => $fileIo,
             'file_io_summary' => FileIoTestsModel::summarise($fileIo),
+            'feature_gaps'    => $featureGaps,
+            'agent_mode_stats' => $agentModeStats,
             'generated_at' => gmdate('c'),
         ];
         $json['human_summary'] = $this->runHumanSummary($json);
@@ -491,6 +506,39 @@ class ReportService
         ];
     }
 
+    /**
+     * One-line stat: how many sessions in this run executed the vision agent
+     * (i.e. their stored result_json carries a non-empty agent_steps trace)
+     * versus the deterministic template step loop, plus the total agent
+     * screens/steps taken across the run.
+     *
+     * @param list<array<string, mixed>> $results
+     * @return array{agent_mode_sessions:int, template_mode_sessions:int, agent_steps_total:int}
+     */
+    private function summariseAgentMode(array $results): array
+    {
+        $agentModeSessions = 0;
+        $templateModeSessions = 0;
+        $agentStepsTotal = 0;
+
+        foreach ($results as $r) {
+            $resultJson = is_array($r['result_json'] ?? null) ? $r['result_json'] : [];
+            $steps      = is_array($resultJson['agent_steps'] ?? null) ? $resultJson['agent_steps'] : [];
+            if ($steps !== []) {
+                $agentModeSessions++;
+                $agentStepsTotal += count($steps);
+            } else {
+                $templateModeSessions++;
+            }
+        }
+
+        return [
+            'agent_mode_sessions'    => $agentModeSessions,
+            'template_mode_sessions' => $templateModeSessions,
+            'agent_steps_total'      => $agentStepsTotal,
+        ];
+    }
+
     private function sessionDir(array $session, ?array $run): string
     {
         $product = $run['product_name'] ?? 'unknown';
@@ -666,6 +714,9 @@ class ReportService
             );
         }
 
+        $agentTimelineSection = $this->renderAgentStepsSection((array) ($json['agent_steps'] ?? []));
+        $featureGapsSection   = $this->renderFeatureGapsSection((array) ($json['feature_gaps'] ?? []));
+
         return $this->htmlShell(
             'QA Session — ' . ($session['name'] ?? ''),
             sprintf(
@@ -676,12 +727,14 @@ class ReportService
                  <div class="summary"><strong>What happened:</strong> %s</div>
                  <h3>Failed steps</h3>
                  <table><thead><tr><th>#</th><th>Step</th><th>Error</th></tr></thead><tbody>%s</tbody></table>
+                 %s
                  <h3>Validations</h3>
                  <table><thead><tr><th>Result</th><th>Rule</th><th>Severity</th><th>Expected</th><th>Actual</th><th>Notes</th></tr></thead><tbody>%s</tbody></table>
                  <h3>File I/O &amp; data verification</h3>
                  %s
                  <h3>Decisions taken</h3>
                  <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>
+                 %s
                  <h3>Evidence</h3>
                  %s
                  <h3>Developer prompt pack</h3>
@@ -698,9 +751,11 @@ class ReportService
                 htmlspecialchars((string) ($result['status'] ?? $session['status'])),
                 htmlspecialchars((string) ($json['human_summary'] ?? '')),
                 $stepRows ?: '<tr><td colspan="3" class="muted">No step failed.</td></tr>',
+                $agentTimelineSection,
                 $valRows ?: '<tr><td colspan="6" class="muted">No validations recorded.</td></tr>',
                 $this->renderFileIoTable((array) ($json['file_io_tests'] ?? []), (array) ($json['file_io_summary'] ?? [])),
                 $decisionRows,
+                $featureGapsSection,
                 $this->renderEvidence((array) ($json['evidence'] ?? [])),
                 htmlspecialchars((string) ($json['developer_prompt_pack'] ?? '')),
                 htmlspecialchars(json_encode($result['result_json'] ?? [], JSON_PRETTY_PRINT))
@@ -772,6 +827,88 @@ class ReportService
         return $out . '</div>';
     }
 
+    /**
+     * "AI Agent Timeline" section for a session that ran in vision-agent mode.
+     * Returns '' (no header, no empty table) when there are no steps to show,
+     * since result_json.agent_steps may not exist yet for template-mode
+     * sessions or workers that predate the vision agent.
+     *
+     * @param list<array<string, mixed>> $steps
+     */
+    private function renderAgentStepsSection(array $steps): string
+    {
+        if ($steps === []) {
+            return '';
+        }
+
+        $rows = '';
+        foreach ($steps as $step) {
+            $action = is_array($step['action'] ?? null) ? $step['action'] : [];
+            $actionLabel = (string) ($action['type'] ?? '');
+            if ($actionLabel === 'capture_table' && ! empty($action['key'])) {
+                $actionLabel .= ' → ' . $action['key'];
+            } elseif (isset($action['mark'])) {
+                $actionLabel .= ' (mark ' . $action['mark'] . ')';
+            }
+            $outcome  = (string) ($step['outcome'] ?? '');
+            $captured = trim((string) ($step['captured_key'] ?? ''));
+            $provider = trim((string) ($step['provider'] ?? ''));
+            $model    = trim((string) ($step['model'] ?? ''));
+            $latency  = isset($step['latency_ms']) && $step['latency_ms'] !== null
+                ? ((int) $step['latency_ms']) . 'ms'
+                : '';
+            $providerLabel = trim($provider . ($provider !== '' && $model !== '' ? ' · ' . $model : ''));
+            $providerLabel = trim($providerLabel . ($providerLabel !== '' && $latency !== '' ? ' · ' : $latency));
+
+            $rows .= sprintf(
+                '<tr class="%s"><td>%s</td><td>%s</td><td class="status status-%s">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                in_array($outcome, ['refused', 'failed'], true) ? 'fail' : 'pass',
+                htmlspecialchars((string) ($step['ordinal'] ?? '')),
+                htmlspecialchars($actionLabel !== '' ? $actionLabel : '—'),
+                htmlspecialchars($outcome),
+                htmlspecialchars($outcome !== '' ? $outcome : '—'),
+                htmlspecialchars((string) ($step['observation'] ?? $step['outcome_observation'] ?? '')),
+                htmlspecialchars($captured !== '' ? $captured : '—'),
+                htmlspecialchars($providerLabel !== '' ? $providerLabel : '—')
+            );
+        }
+
+        return '<h3>AI Agent Timeline</h3>
+            <table><thead><tr><th>#</th><th>Action</th><th>Outcome</th><th>Observation</th><th>Captured</th><th>Provider</th></tr></thead><tbody>'
+            . $rows . '</tbody></table>';
+    }
+
+    /**
+     * "Feature Gaps" section (competitor-comparison findings). Returns '' when
+     * there is nothing to show, so the header is omitted entirely.
+     *
+     * @param list<array<string, mixed>> $gaps
+     */
+    private function renderFeatureGapsSection(array $gaps): string
+    {
+        if ($gaps === []) {
+            return '';
+        }
+
+        $rows = '';
+        foreach ($gaps as $gap) {
+            $observed = ! empty($gap['observed']);
+            $rows .= sprintf(
+                '<tr class="%s"><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                $observed ? 'pass' : 'fail',
+                htmlspecialchars((string) ($gap['expected_feature'] ?? '')),
+                $observed ? 'present' : 'MISSING',
+                htmlspecialchars((string) ($gap['severity'] ?? '')),
+                htmlspecialchars((string) ($gap['confidence'] ?? '')),
+                htmlspecialchars((string) ($gap['recommendation'] ?? ''))
+            );
+        }
+
+        return '<h3>Feature Gaps</h3>
+            <table><thead><tr><th>Expected Feature</th><th>Observed</th><th>Severity</th><th>Confidence</th><th>Recommendation</th></tr></thead><tbody>'
+            . $rows . '</tbody></table>';
+    }
+
     private function renderFinalHtml(array $json): string
     {
         $totals = $json['totals'];
@@ -809,6 +946,8 @@ class ReportService
 
         $sev = $totals['severity'] ?? [];
         $decisionRows = $this->renderDecisionRows($json['decisions_taken'] ?? []);
+        $featureGapsSection = $this->renderFeatureGapsSection((array) ($json['feature_gaps'] ?? []));
+        $agentModeStat = $this->renderAgentModeStat((array) ($json['agent_mode_stats'] ?? []));
 
         return $this->htmlShell(
             'QA Consolidated Report — ' . ($json['qa_run_id'] ?? ''),
@@ -816,6 +955,7 @@ class ReportService
                 '<h1>QA Consolidated Report</h1>
                  <p class="muted">%s · %s · %s</p>
                  <div class="summary"><strong>Summary:</strong> %s</div>
+                 %s
                  <div class="cards">
                     <div class="card"><div class="k">%d</div><div class="v">Sessions</div></div>
                     <div class="card pass"><div class="k">%d</div><div class="v">Passed</div></div>
@@ -831,12 +971,14 @@ class ReportService
                  %s
                  <h3>Decisions taken</h3>
                  <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>
+                 %s
                  <h3>Developer prompt pack</h3>
                  <pre class="md">%s</pre>',
                 htmlspecialchars($json['qa_run_id'] ?? ''),
                 htmlspecialchars($json['run']['product_name'] ?? ''),
                 htmlspecialchars((string) ($json['environment']['label'] ?? $json['run']['environment'] ?? '')),
                 htmlspecialchars((string) ($json['human_summary'] ?? '')),
+                $agentModeStat,
                 (int) ($totals['total'] ?? 0),
                 (int) ($totals['passed'] ?? 0),
                 (int) ($totals['failed'] ?? 0),
@@ -847,9 +989,30 @@ class ReportService
                 $errorRows ?: '<tr><td colspan="5" class="muted">No validation failed.</td></tr>',
                 $this->renderFileIoTable((array) ($json['file_io_tests'] ?? []), (array) ($json['file_io_summary'] ?? [])),
                 $decisionRows,
+                $featureGapsSection,
                 htmlspecialchars((string) ($json['developer_prompt_pack'] ?? ''))
             )
         );
+    }
+
+    /**
+     * One-line "N session(s) ran in AI agent mode, M in template mode, T agent
+     * screens total" stat. Returns '' when there is nothing worth reporting
+     * (e.g. every session ran in template mode).
+     *
+     * @param array{agent_mode_sessions?:int, template_mode_sessions?:int, agent_steps_total?:int} $stats
+     */
+    private function renderAgentModeStat(array $stats): string
+    {
+        $agentSessions = (int) ($stats['agent_mode_sessions'] ?? 0);
+        if ($agentSessions === 0) {
+            return '';
+        }
+        $templateSessions = (int) ($stats['template_mode_sessions'] ?? 0);
+        $stepsTotal = (int) ($stats['agent_steps_total'] ?? 0);
+
+        return '<p class="muted">AI agent mode: ' . $agentSessions . ' session(s) ran the vision agent ('
+            . $stepsTotal . ' screen(s) total), ' . $templateSessions . ' ran the deterministic template.</p>';
     }
 
     private function renderDecisionRows(array $decisions): string

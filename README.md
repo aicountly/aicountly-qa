@@ -18,6 +18,23 @@ This portal **does not**:
 
 It is testing & reporting only. Code fixes belong in the target product repo.
 
+## AI Brain (optional vision-agent mode)
+
+QA uses the same three-provider AI brain as the sibling smoke portal: Gemini 2.5
+Flash for screenshot review (gpt-4o-mini fallback), and an OpenAI + Perplexity
+council arbitrated by Gemini for text tasks (synthetic data, data-quality
+analysis, competitor feature-gap review). Provider keys live only in
+`server-php/.env`; the worker never holds them and proxies every call through
+`POST /v1/worker/brain/invoke`.
+
+By default, sessions still run today's deterministic, template-driven step
+execution — nothing changes unless `brain.agent_mode` is explicitly switched
+from `template` to `agent`, in which case the worker drives the browser with
+a vision agent instead, bounded by a mandatory data-capture contract so it
+can never falsely report a passing session without having read the numbers
+under test. This still only tests and reports — it never fixes target app
+code. See [docs/QA-BRAIN.md](docs/QA-BRAIN.md) for the full architecture.
+
 ## Stack
 
 | Layer    | Technology                                                        |
@@ -102,4 +119,4 @@ Production (QA cPanel): `~/aicountly-qa-worker`, PM2 name **`aicountly-qa-worker
   - `worker/` → `~/aicountly-qa-worker` + PM2 restart `aicountly-qa-worker`
 - Worker auth is unchanged: `X-Worker-Token` / `QA_WORKER_TOKEN` against the QA API.
 
-See [docs/QA-PORTAL-README.md](docs/QA-PORTAL-README.md) and [docs/QA-WORKER.md](docs/QA-WORKER.md) for setup, runtime contracts, and WHM one-time commands.
+See [docs/QA-PORTAL-README.md](docs/QA-PORTAL-README.md) and [docs/QA-WORKER.md](docs/QA-WORKER.md) for setup, runtime contracts, and WHM one-time commands, and [docs/QA-BRAIN.md](docs/QA-BRAIN.md) for the AI Brain architecture.

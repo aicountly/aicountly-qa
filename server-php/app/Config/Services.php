@@ -5,7 +5,13 @@ namespace Config;
 use App\Libraries\Jwt;
 use App\Libraries\RunIdGenerator;
 use App\Libraries\Vault;
+use App\Models\SettingsModel;
 use App\Services\AuditService;
+use App\Services\Brain\Adapters\DeterministicAdapter;
+use App\Services\Brain\Adapters\GeminiAdapter;
+use App\Services\Brain\Adapters\OpenAIAdapter;
+use App\Services\Brain\Adapters\PerplexityAdapter;
+use App\Services\Brain\BrainEnsemble;
 use App\Services\ConsoleIdentityService;
 use App\Services\ReportService;
 use App\Services\SessionPlannerService;
@@ -76,5 +82,19 @@ class Services extends BaseService
             return static::getSharedInstance('consoleIdentity') ?? static::consoleIdentity(false);
         }
         return new ConsoleIdentityService();
+    }
+
+    public static function brain(bool $getShared = true): BrainEnsemble
+    {
+        if ($getShared) {
+            return static::getSharedInstance('brain') ?? static::brain(false);
+        }
+        return new BrainEnsemble(
+            new OpenAIAdapter(),
+            new PerplexityAdapter(),
+            new GeminiAdapter(),
+            new DeterministicAdapter(),
+            new SettingsModel(),
+        );
     }
 }
