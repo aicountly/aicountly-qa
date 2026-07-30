@@ -1,0 +1,6 @@
+AICOUNTLY QA — synthetic document fixture
+reference: QA-DOC-0001
+paragraph-1: Deterministic text used to verify document upload and download fidelity.
+paragraph-2: The downloaded copy must be byte-identical to this file.
+paragraph-3: No real content, no personal data, safe to store in any sandbox.
+checksum-anchor: QA-DOC-0001-END

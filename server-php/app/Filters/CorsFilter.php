@@ -21,7 +21,7 @@ class CorsFilter implements FilterInterface
         $response->setHeader('Vary', 'Origin');
         $response->setHeader('Access-Control-Allow-Credentials', 'true');
         $response->setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-        $response->setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-Worker-Token,X-Requested-With');
+        $response->setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-Worker-Token,X-Worker-Id,X-Requested-With');
         $response->setHeader('Access-Control-Max-Age', '3600');
 
         if (strtoupper($request->getMethod()) === 'OPTIONS') {

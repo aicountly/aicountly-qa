@@ -1,16 +1,25 @@
-import { envLabel, isProd } from '../lib/format.js'
+import {
+  environmentLabel,
+  isObserverOnlyEnvironment,
+  isProductionEnvironment,
+} from '../lib/environments.js'
 
 export default function ProductionBanner({ environment, profileName }) {
-  if (!isProd(environment)) return null
+  if (!isProductionEnvironment(environment)) return null
 
-  const env = envLabel[environment] || environment
+  const env = environmentLabel(environment)
   const target = profileName ? `${env} · ${profileName}` : env
+  const observerOnly = isObserverOnlyEnvironment(environment)
 
   return (
-    <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-center text-xs text-slate-700 sm:px-6">
-      <span className="font-medium text-slate-800">Note:</span>
-      {' '}You are connected to a production target ({target}).
-      {' '}Destructive actions are restricted by the safety guard.
+    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-center text-xs text-red-900">
+      <span className="font-semibold">Live production target</span>
+      {' — '}
+      {target}.
+      {' '}
+      {observerOnly
+        ? 'Observer-only: the worker reads and verifies data but never creates, edits, uploads or deletes anything.'
+        : 'Full access: data creation and synthetic file upload/download round-trips are permitted. The safety guard still blocks deletes outside allowed modules.'}
     </div>
   )
 }

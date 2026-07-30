@@ -54,17 +54,6 @@ export function fmtRelative(iso) {
   return `${Math.round(diff / 86400)}d ago`
 }
 
-export const envLabel = {
-  sandbox: 'Sandbox',
-  gh: 'GH / Staging',
-  prod_basic: 'Production (Basic)',
-  prod_full: 'Production (Full)',
-}
-
-export function isProd(env) {
-  return env === 'prod_basic' || env === 'prod_full'
-}
-
 export function classNames(...xs) {
   return xs.filter(Boolean).join(' ')
 }

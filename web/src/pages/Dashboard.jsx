@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, v1 } from '../lib/api.js'
-import { fmtRelative, envLabel } from '../lib/format.js'
+import { fmtRelative } from '../lib/format.js'
 import { EnvBadge, StatusBadge } from '../components/Badges.jsx'
 
 function Card({ k, v, accent, to }) {
@@ -31,9 +31,13 @@ export default function Dashboard() {
           <div>
             <span className="font-semibold">QA Worker: </span>
             {workerOnline ? (
-              <span>Online{worker.worker_id ? ` (${worker.worker_id})` : ''}</span>
+              <span>Online{worker.worker_id ? ` (${worker.worker_id})` : ' (aicountly-qa-worker)'}</span>
             ) : (
-              <span>Offline — sessions stay queued until worker.apis.aicountly.com is running</span>
+              <span>
+                Offline — sessions stay queued until{' '}
+                <span className="font-mono text-xs">{worker.worker_id || 'aicountly-qa-worker'}</span>
+                {' '}is running
+              </span>
             )}
           </div>
           {worker.last_seen_at && (

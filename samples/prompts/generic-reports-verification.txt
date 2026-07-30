@@ -1,0 +1,17 @@
+Reports data verification. Every report must reconcile with the underlying records.
+
+For each report in scope:
+- Load the report with a known date range and confirm it renders without a console or network error.
+- Confirm the row set matches the records that fall inside the filter.
+- Change the date range and confirm the result set changes accordingly; an unchanged result set is a defect.
+- Re-compute each total, subtotal and closing figure from the visible rows and compare against what the report prints.
+- Export the report where an export exists, and confirm the exported numbers equal the on-screen numbers.
+
+Report as errors:
+- Totals that do not equal the sum of their rows.
+- Filters that do not affect the result set.
+- Reports that render empty when data exists.
+- Any difference between the on-screen figure and the exported figure.
+- Slow reports that exceed a reasonable timeout, recorded with the measured duration.
+
+State expected versus actual for every numeric mismatch.

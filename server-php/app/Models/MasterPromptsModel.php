@@ -11,6 +11,7 @@ class MasterPromptsModel extends Model
     protected $returnType    = 'array';
     protected $useTimestamps = false;
     protected $allowedFields = [
-        'qa_run_id', 'user_id', 'target_profile_id', 'prompt_text', 'prompt_kind', 'created_at',
+        'qa_run_id', 'user_id', 'target_profile_id', 'title',
+        'prompt_text', 'prompt_kind', 'created_at',
     ];
 }

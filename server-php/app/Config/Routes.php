@@ -56,6 +56,8 @@ $routes->group('v1', static function ($routes) {
         $routes->post('sessions/(:num)/progress', 'Api\\V1\\WorkerController::progress/$1');
         $routes->post('sessions/(:num)/result', 'Api\\V1\\WorkerController::postResult/$1');
         $routes->post('sessions/(:num)/evidence', 'Api\\V1\\WorkerController::uploadEvidence/$1');
+        $routes->post('sessions/(:num)/file-io', 'Api\\V1\\WorkerController::postFileIo/$1');
+        $routes->post('file-io/(:num)/artifact', 'Api\\V1\\WorkerController::uploadFileIoArtifact/$1');
         $routes->get('credentials/(:num)', 'Api\\V1\\WorkerController::credentials/$1');
         $routes->post('decisions', 'Api\\V1\\WorkerController::createDecision');
         $routes->get('decisions/(:num)', 'Api\\V1\\WorkerController::decision/$1');
@@ -77,16 +79,23 @@ $routes->group('v1', static function ($routes) {
         $routes->delete('target-profiles/(:num)/credentials', 'Api\\V1\\CredentialsController::clear/$1', ['filter' => 'role:Owner']);
         $routes->resource('target-profiles', ['controller' => 'Api\\V1\\TargetProfilesController']);
 
+        $routes->get('environments', 'Api\\V1\\EnvironmentsController::index');
+
+        $routes->get('master-prompts-samples', 'Api\\V1\\MasterPromptsController::samples');
         $routes->post('master-prompts', 'Api\\V1\\MasterPromptsController::create', ['filter' => 'role:Owner,QA Manager']);
         $routes->get('master-prompts', 'Api\\V1\\MasterPromptsController::index');
 
         $routes->post('session-plans/generate', 'Api\\V1\\SessionPlansController::generate', ['filter' => 'role:Owner,QA Manager']);
         $routes->resource('session-plans', ['controller' => 'Api\\V1\\SessionPlansController']);
         $routes->post('session-plans/(:num)/approve', 'Api\\V1\\SessionPlansController::approve/$1', ['filter' => 'role:Owner,QA Manager']);
+        $routes->post('session-plans/(:num)/reject', 'Api\\V1\\SessionPlansController::reject/$1', ['filter' => 'role:Owner,QA Manager']);
 
         $routes->get('runs/(:segment)/decisions', 'Api\\V1\\DecisionsController::index/$1', ['filter' => 'role:Owner,QA Manager']);
         $routes->post('runs/(:segment)/decisions/(:num)/answer', 'Api\\V1\\DecisionsController::answer/$1/$2', ['filter' => 'role:Owner,QA Manager']);
         $routes->get('runs/(:segment)/decisions/(:num)/screenshot', 'Api\\V1\\DecisionsController::screenshot/$1/$2', ['filter' => 'role:Owner,QA Manager']);
+        $routes->post('runs/(:segment)/cancel', 'Api\\V1\\RunsController::cancel/$1', ['filter' => 'role:Owner,QA Manager']);
+        $routes->get('runs/(:segment)/file-io', 'Api\\V1\\RunsController::fileIo/$1');
+        $routes->get('runs/(:segment)/file-io/(:num)/artifact/(:segment)', 'Api\\V1\\RunsController::fileIoArtifact/$1/$2/$3');
         $routes->resource('runs', ['controller' => 'Api\\V1\\RunsController']);
         $routes->get('sessions/(:num)/live', 'Api\\V1\\SessionsController::live/$1');
         // Prefer query ?filename=… — path URLs ending in .png are often intercepted by
@@ -105,13 +114,17 @@ $routes->group('v1', static function ($routes) {
             'only'       => ['index', 'show', 'update'],
         ]);
         $routes->patch('error-register/(:num)', 'Api\\V1\\ErrorRegisterController::update/$1', ['filter' => 'role:Owner,QA Manager']);
+        $routes->delete('error-register/clear', 'Api\\V1\\ErrorRegisterController::clear', ['filter' => 'role:Owner']);
+        $routes->delete('error-register/(:num)', 'Api\\V1\\ErrorRegisterController::delete/$1', ['filter' => 'role:Owner']);
 
         $routes->get('reports', 'Api\\V1\\ReportsController::index');
         $routes->get('reports/session/(:num)/html', 'Api\\V1\\ReportsController::sessionHtml/$1');
         $routes->get('reports/session/(:num)/json', 'Api\\V1\\ReportsController::sessionJson/$1');
+        $routes->get('reports/session/(:num)/prompts', 'Api\\V1\\ReportsController::sessionPrompts/$1');
         $routes->get('reports/(:segment)', 'Api\\V1\\ReportsController::show/$1');
         $routes->get('reports/(:segment)/html', 'Api\\V1\\ReportsController::html/$1');
         $routes->get('reports/(:segment)/json', 'Api\\V1\\ReportsController::json/$1');
+        $routes->get('reports/(:segment)/prompts', 'Api\\V1\\ReportsController::prompts/$1');
 
         $routes->get('settings', 'Api\\V1\\SettingsController::index', ['filter' => 'role:Owner,QA Manager']);
         $routes->put('settings', 'Api\\V1\\SettingsController::update', ['filter' => 'role:Owner']);

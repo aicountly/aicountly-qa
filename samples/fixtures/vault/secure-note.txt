@@ -1,0 +1,7 @@
+AICOUNTLY QA — synthetic vault note
+reference: QA-VLT-0001
+classification: synthetic-test-data
+line-1: This file exists only to prove upload and download preserve bytes exactly.
+line-2: It contains no real credentials, customer data, or secrets.
+line-3: Any difference in the downloaded copy is a defect.
+checksum-anchor: QA-VLT-0001-END

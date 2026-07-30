@@ -2,13 +2,13 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Controllers\BaseApiController;
 use App\Models\UserRolesModel;
 use App\Models\UsersModel;
-use CodeIgniter\RESTful\ResourceController;
 use Config\Services;
 
-class UsersController extends ResourceController
+class UsersController extends BaseResourceApiController
 {
     protected $modelName = UsersModel::class;
     protected $format    = 'json';

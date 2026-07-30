@@ -22,7 +22,7 @@
     { "kind": "expect_visible", "selector": "[data-test=app-shell],main,#app,.app-shell,.dashboard" }
   ],
   "steps_by_env": {
-    "prod_basic": [
+    "production_readonly": [
       { "kind": "navigate", "to": "{login_url}", "expect": "identity form and Jump To visible" },
       { "kind": "fill", "selector_options": ["input[name=email]", "input[name=username]", "input[type=email]", "#email", "#username"], "value": "{username}" },
       { "kind": "select", "selector_options": ["select#jumptoe", "select[name=jumptoe]"], "value_options": ["Smart Books", "{jump_to}", "books"] },
@@ -34,7 +34,7 @@
       { "kind": "expect_product_host", "expected_base_url": "{base_url}", "allowed_domains": "{allowed_domains}", "recover_once": true, "rule_code": "AUTH_PRODUCT_HOST_MATCH", "on_failure_note": "Login reached the wrong product host. Capture the landed URL and Jump To selection, then fail instead of collecting unrelated product evidence." },
       { "kind": "expect_visible", "selector": "[data-test=app-shell],main,#app,.app-shell,.dashboard,body" }
     ],
-    "prod_full": [
+    "production_full_access": [
       { "kind": "navigate", "to": "{login_url}", "expect": "identity form and Jump To visible" },
       { "kind": "fill", "selector_options": ["input[name=email]", "input[name=username]", "input[type=email]", "#email", "#username"], "value": "{username}" },
       { "kind": "select", "selector_options": ["select#jumptoe", "select[name=jumptoe]"], "value_options": ["Smart Books", "{jump_to}", "books"] },

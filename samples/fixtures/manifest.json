@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "note": "QA file I/O scenarios. Unlike the smoke manifest there is no competitor prompt: each scenario declares what the DATA must look like after the round trip (expected_rows, key_columns, numeric_columns, numeric_tolerance) so a mismatch is reported as a defect with expected vs actual.",
+  "defaults": {
+    "numeric_tolerance": 0.01
+  },
+  "products": {
+    "books": [
+      {
+        "key": "bank-statement-round-trip",
+        "kind": "round_trip",
+        "fixture": "books/bank-statement.csv",
+        "expected_mime": ["text/csv", "application/csv", "application/vnd.ms-excel"],
+        "menu_hints": ["banking", "bank statement", "import", "export"],
+        "expected_rows": 4,
+        "key_columns": ["reference"],
+        "numeric_columns": ["debit", "credit"],
+        "numeric_tolerance": 0.01,
+        "ignore_columns": ["id", "created_at", "updated_at", "balance"]
+      },
+      {
+        "key": "bank-statement-bad-mime",
+        "kind": "reject",
+        "fixture": "_common/bad-mime.png",
+        "expected_mime": [],
+        "menu_hints": ["banking", "bank statement", "import"],
+        "reject_matches": "invalid|mime|file type|csv only|unsupported|not allowed"
+      }
+    ],
+    "contacts": [
+      {
+        "key": "contacts-csv-round-trip",
+        "kind": "round_trip",
+        "fixture": "contacts/contacts-import.csv",
+        "expected_mime": ["text/csv", "application/csv"],
+        "menu_hints": ["contacts", "import", "export"],
+        "expected_rows": 5,
+        "key_columns": ["external_id", "email"],
+        "numeric_columns": [],
+        "ignore_columns": ["id", "created_at", "updated_at"]
+      }
+    ],
+    "hrms": [
+      {
+        "key": "employee-csv-import",
+        "kind": "import",
+        "fixture": "hrms/employees.csv",
+        "expected_mime": ["text/csv", "application/csv"],
+        "menu_hints": ["employee", "employees", "import"],
+        "expected_rows": 4,
+        "key_columns": ["employee_code"],
+        "numeric_columns": ["gross_monthly"],
+        "numeric_tolerance": 0.01
+      }
+    ],
+    "fr": [
+      {
+        "key": "trial-balance-round-trip",
+        "kind": "round_trip",
+        "fixture": "fr/trial-balance.csv",
+        "expected_mime": ["text/csv", "application/csv"],
+        "menu_hints": ["trial balance", "import", "export"],
+        "expected_rows": 6,
+        "key_columns": ["account_code"],
+        "numeric_columns": ["debit", "credit"],
+        "numeric_tolerance": 0.01
+      }
+    ],
+    "secretarial": [
+      {
+        "key": "member-register-export",
+        "kind": "export",
+        "fixture": "secretarial/member-register.csv",
+        "expected_mime": ["text/csv", "application/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "menu_hints": ["register", "members", "export"],
+        "key_columns": ["folio_no"],
+        "numeric_columns": ["shares_held"]
+      }
+    ],
+    "calendar": [
+      {
+        "key": "calendar-ics-round-trip",
+        "kind": "round_trip",
+        "fixture": "calendar/schedule.ics",
+        "expected_mime": ["text/calendar"],
+        "menu_hints": ["calendar", "import", "export"],
+        "key_columns": ["UID"],
+        "expected_rows": 2
+      }
+    ],
+    "docs": [
+      {
+        "key": "document-round-trip",
+        "kind": "round_trip",
+        "fixture": "docs/sample-doc.txt",
+        "expected_mime": ["text/plain"],
+        "menu_hints": ["documents", "upload", "download"]
+      }
+    ],
+    "vault": [
+      {
+        "key": "secure-note-round-trip",
+        "kind": "round_trip",
+        "fixture": "vault/secure-note.txt",
+        "expected_mime": ["text/plain"],
+        "menu_hints": ["vault", "upload", "download"]
+      }
+    ]
+  }
+}

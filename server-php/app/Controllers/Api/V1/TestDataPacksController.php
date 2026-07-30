@@ -2,11 +2,11 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Models\ExpectedResultsModel;
 use App\Models\TestDataPacksModel;
-use CodeIgniter\RESTful\ResourceController;
 
-class TestDataPacksController extends ResourceController
+class TestDataPacksController extends BaseResourceApiController
 {
     protected $modelName = TestDataPacksModel::class;
     protected $format    = 'json';

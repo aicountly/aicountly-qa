@@ -1,0 +1,18 @@
+Negative and validation-path run. Confirm the application refuses bad input safely.
+
+For each form in scope try:
+- Submitting with required fields empty.
+- Out-of-range numbers (negative amounts, zero quantities, oversized values).
+- Malformed dates, dates outside the open period, and end-before-start ranges.
+- Duplicate references, codes, or names that should be unique.
+- Over-long strings and unusual characters in text fields.
+- Cancelling mid-edit and confirming nothing was persisted.
+
+Report as errors:
+- Invalid input that is accepted and saved.
+- Validation that fires but shows no message, or shows a message that does not name the field.
+- A server error (5xx) instead of a validation response.
+- A form that blocks valid input because the validation is too strict.
+- Any state where the record is partially saved after a rejected submit.
+
+Capture the exact input used, the expected rejection, and the actual behaviour.

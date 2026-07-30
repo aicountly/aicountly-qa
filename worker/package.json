@@ -18,7 +18,7 @@
     "qa:validate": "tsx index.ts --mode=validate",
     "qa:cleanup": "tsx index.ts --mode=cleanup",
     "playwright:install": "playwright install --with-deps chromium",
-    "test": "tsx --test auth/jumpTargets.test.ts utils/hostGuard.test.ts"
+    "test": "tsx --test auth/jumpTargets.test.ts utils/hostGuard.test.ts utils/environments.test.ts fileIo/dataVerification.test.ts"
   },
   "dependencies": {
     "axios": "^1.7.7",

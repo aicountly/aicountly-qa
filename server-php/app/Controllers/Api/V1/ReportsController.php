@@ -15,13 +15,95 @@ class ReportsController extends BaseApiController
         if (! empty($q['qa_run_id']))  { $m->where('qa_run_id', $q['qa_run_id']); }
         if (! empty($q['kind']))       { $m->where('kind', $q['kind']); }
         if (! empty($q['product']))    { $m->where('product_name', $q['product']); }
-        return $this->ok($m->orderBy('generated_at', 'DESC')->limit(200)->findAll());
+
+        return $this->ok($this->withUrls($m->orderBy('generated_at', 'DESC')->limit(200)->findAll()));
     }
 
     public function show(string $qaRunId)
     {
         $rows = (new ReportsModel())->where('qa_run_id', $qaRunId)->orderBy('generated_at', 'DESC')->findAll();
-        return $this->ok($rows);
+
+        return $this->ok($this->withUrls($rows));
+    }
+
+    /**
+     * Session-kind rows must address the session endpoints, not the run-level ones,
+     * otherwise every session in a run opens the same consolidated report.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function withUrls(array $rows): array
+    {
+        return array_map(static function (array $row): array {
+            $isSession = (string) ($row['kind'] ?? '') === 'session' && ! empty($row['session_id']);
+            $base = $isSession
+                ? 'api/v1/reports/session/' . (int) $row['session_id']
+                : 'api/v1/reports/' . rawurlencode((string) ($row['qa_run_id'] ?? ''));
+
+            $row['html_url']    = $base . '/html';
+            $row['json_url']    = $base . '/json';
+            $row['prompts_url'] = $base . '/prompts';
+
+            return $row;
+        }, $rows);
+    }
+
+    /**
+     * Consolidated developer prompt pack for a run.
+     * Default response is JSON: {ok:true,data:{qa_run_id,kind,markdown}}.
+     * Add ?format=md (or Accept: text/markdown) for the raw markdown body.
+     */
+    public function prompts(string $qaRunId)
+    {
+        $built = Services::reportService()->materializeFinalReport($qaRunId);
+        if (! ($built['ok'] ?? false)) {
+            return $this->fail($built['error'] ?? 'Final report not yet generated for this run.', 404);
+        }
+
+        $markdown = (string) ($built['prompts_body'] ?? '');
+        $this->auditReportView($built['id'] ?? null, $qaRunId, null, 'prompts', 'final');
+
+        return $this->respondPrompts($markdown, [
+            'qa_run_id' => $qaRunId,
+            'kind'      => 'final',
+            'filename'  => basename((string) ($built['prompts'] ?? 'consolidated.cursor-prompts.md')),
+        ]);
+    }
+
+    /** Per-session developer prompt pack; same response shape as prompts(). */
+    public function sessionPrompts(int $sessionId)
+    {
+        $built = Services::reportService()->buildSessionReport($sessionId);
+        if (! ($built['ok'] ?? false)) {
+            return $this->fail($built['error'] ?? 'Session report not yet generated.', 404);
+        }
+
+        $markdown = (string) ($built['prompts_body'] ?? '');
+        $this->auditReportView($built['id'] ?? null, $built['qa_run_id'] ?? null, $sessionId, 'prompts', 'session');
+
+        return $this->respondPrompts($markdown, [
+            'qa_run_id'  => $built['qa_run_id'] ?? null,
+            'session_id' => $sessionId,
+            'kind'       => 'session',
+            'filename'   => basename((string) ($built['prompts'] ?? 'report.cursor-prompts.md')),
+        ]);
+    }
+
+    /** @param array<string, mixed> $meta */
+    private function respondPrompts(string $markdown, array $meta)
+    {
+        $format = strtolower(trim((string) ($this->request->getGet('format') ?? '')));
+        $wantsRaw = $format === 'md' || $format === 'markdown'
+            || str_contains(strtolower($this->request->getHeaderLine('Accept')), 'text/markdown');
+
+        if ($wantsRaw) {
+            return $this->response
+                ->setHeader('Content-Type', 'text/markdown; charset=UTF-8')
+                ->setBody($markdown);
+        }
+
+        return $this->ok($meta + ['markdown' => $markdown]);
     }
 
     public function html(string $qaRunId)

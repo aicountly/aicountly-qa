@@ -28,6 +28,36 @@ class CredentialsModel extends Model
     }
 
     /**
+     * Store (or rotate) the encrypted target-app password for a profile.
+     *
+     * @param array{ciphertext: string, iv: string, tag: string} $encrypted
+     * @return int new version number
+     */
+    public function upsertForProfile(int $targetProfileId, array $encrypted, ?int $userId = null): int
+    {
+        $existing = $this->findByProfile($targetProfileId);
+        $version  = (int) ($existing['version'] ?? 0) + 1;
+
+        $row = [
+            'target_profile_id' => $targetProfileId,
+            'secret_ciphertext' => $encrypted['ciphertext'],
+            'iv'                => $encrypted['iv'],
+            'auth_tag'          => $encrypted['tag'],
+            'version'           => $version,
+            'rotated_at'        => date('Y-m-d H:i:s'),
+            'created_by'        => $userId,
+        ];
+
+        if ($existing) {
+            $this->update($existing['id'], $row);
+        } else {
+            $this->insert($row);
+        }
+
+        return $version;
+    }
+
+    /**
      * PostgreSQL BYTEA cannot be passed as raw binary through CI query binds
      * (pg_escape_literal fails on non-UTF-8). Store as hex format \x....
      */

@@ -7,6 +7,7 @@ use App\Models\CredentialsModel;
 use App\Models\DecisionMemoryModel;
 use App\Models\ErrorRegisterModel;
 use App\Models\ExpectedResultsModel;
+use App\Models\FileIoTestsModel;
 use App\Models\RunsModel;
 use App\Models\RunDecisionsModel;
 use App\Models\SessionEventsModel;
@@ -16,6 +17,8 @@ use App\Models\TargetProfilesModel;
 use App\Models\TestDataPacksModel;
 use App\Models\ValidationResultsModel;
 use App\Models\ValidationRulesModel;
+use App\Services\WorkerStatusService;
+use Config\Environments;
 use Config\Products;
 use Config\Services;
 
@@ -27,7 +30,7 @@ class WorkerController extends BaseApiController
 {
     public function nextSession()
     {
-        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        $workerId = $this->resolveWorkerId();
         Services::workerStatus()->recordHeartbeat($workerId);
 
         $session  = (new SessionsModel())->claimNext($workerId);
@@ -119,7 +122,7 @@ class WorkerController extends BaseApiController
 
     public function claim(int $sessionId)
     {
-        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        $workerId = $this->resolveWorkerId();
         $now = date('Y-m-d H:i:s');
         $session = (new SessionsModel())->find($sessionId);
         (new SessionsModel())->update($sessionId, [
@@ -142,7 +145,7 @@ class WorkerController extends BaseApiController
 
     public function heartbeat(int $sessionId)
     {
-        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        $workerId = $this->resolveWorkerId();
         Services::workerStatus()->recordHeartbeat($workerId);
 
         (new SessionsModel())->update($sessionId, ['last_heartbeat_at' => date('Y-m-d H:i:s')]);
@@ -326,9 +329,11 @@ class WorkerController extends BaseApiController
         if ($product === '' || $environment === '' || $situation === '') {
             return $this->fail('product_name, environment, and situation_key are required.', 400);
         }
+        // Memory rows are stored on canonical tiers, so a worker still sending a
+        // legacy value (gh / prod_basic / prod_full) must not silently miss.
         $row = (new DecisionMemoryModel())
             ->where('product_name', $product)
-            ->where('environment', $environment)
+            ->where('environment', Environments::normalize($environment))
             ->where('situation_key', $situation)
             ->first();
 
@@ -340,7 +345,7 @@ class WorkerController extends BaseApiController
      */
     public function progress(int $sessionId)
     {
-        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
+        $workerId = $this->resolveWorkerId();
         Services::workerStatus()->recordHeartbeat($workerId);
 
         $session = (new SessionsModel())->find($sessionId);
@@ -499,6 +504,13 @@ class WorkerController extends BaseApiController
             ? ($status === 'passed' ? 'completed' : $status)
             : 'completed';
 
+        // A result can land after the operator cancelled the run. Keep the evidence,
+        // but never resurrect a cancelled session into a completed one.
+        $wasCancelled = (string) ($session['status'] ?? '') === 'cancelled';
+        if ($wasCancelled) {
+            $finalStatus = 'cancelled';
+        }
+
         (new SessionsModel())->update($sessionId, [
             'status'       => $finalStatus,
             'completed_at' => date('Y-m-d H:i:s'),
@@ -513,13 +525,23 @@ class WorkerController extends BaseApiController
                 ? 'LOGIN SUCCESSFUL — Smart Books sign-in completed (' . $status . ').'
                 : 'LOGIN FAILED / INCOMPLETE — status ' . $status . ' (severity: ' . $severity . '). Check credentials, Jump To → Smart Books, OTP/challenge state, login URL, and View log screenshots.')
             : 'Session finished with status: ' . $status . ' (severity: ' . $severity . ')';
+        if ($wasCancelled) {
+            $doneMsg = 'Worker reported "' . $status . '" after the QA run was cancelled. '
+                . 'The result and its evidence were kept; the session stays cancelled.';
+        }
 
         $this->recordEvent(
             $sessionId,
             (string) $session['qa_run_id'],
-            $okLogin && $isLogin ? 'login_success' : 'completed',
+            $wasCancelled ? 'cancelled' : ($okLogin && $isLogin ? 'login_success' : 'completed'),
             $doneMsg,
-            ['metadata' => ['status' => $status, 'severity' => $severity, 'passed' => $passed, 'failed' => $failed]]
+            ['metadata' => [
+                'status'        => $status,
+                'severity'      => $severity,
+                'passed'        => $passed,
+                'failed'        => $failed,
+                'was_cancelled' => $wasCancelled,
+            ]]
         );
 
         // Generate the session-level report.
@@ -543,10 +565,15 @@ class WorkerController extends BaseApiController
 
     public function ping()
     {
-        $workerId = (string) ($this->request->getGet('worker_id') ?? gethostname());
-        Services::workerStatus()->recordHeartbeat($workerId);
+        $workerId = $this->resolveWorkerId();
+        $body     = $this->input();
+        $package  = trim((string) ($body['package'] ?? ''));
+        Services::workerStatus()->recordHeartbeat(
+            $workerId,
+            $package !== '' ? $package : null
+        );
 
-        return $this->ok(['ok' => true]);
+        return $this->ok(['ok' => true, 'worker_id' => $workerId]);
     }
 
     public function uploadEvidence(int $sessionId)
@@ -605,6 +632,167 @@ class WorkerController extends BaseApiController
         return $this->ok(['path' => $path, 'filename' => $name]);
     }
 
+    /**
+     * Worker posts one file I/O scenario verdict: hash/MIME/structure comparison
+     * plus QA's data verification (row counts, key cells, numeric totals).
+     */
+    public function postFileIo(int $sessionId)
+    {
+        $session = (new SessionsModel())->find($sessionId);
+        if (! $session) {
+            return $this->fail('Session not found.', 404);
+        }
+
+        $body     = $this->input();
+        $scenario = trim((string) ($body['scenario_key'] ?? ''));
+        if ($scenario === '') {
+            return $this->fail('scenario_key is required.', 400);
+        }
+
+        $status = (string) ($body['compare_status'] ?? 'skipped');
+        if (! in_array($status, FileIoTestsModel::STATUSES, true)) {
+            return $this->fail('compare_status must be one of: ' . implode(', ', FileIoTestsModel::STATUSES), 422);
+        }
+        $direction = (string) ($body['direction'] ?? 'round_trip');
+        if (! in_array($direction, FileIoTestsModel::DIRECTIONS, true)) {
+            return $this->fail('direction must be one of: ' . implode(', ', FileIoTestsModel::DIRECTIONS), 422);
+        }
+
+        $run   = (new RunsModel())->find($session['qa_run_id']);
+
+        // `artifact_paths` are worker-local. Keep only the ones this host can actually
+        // read, so GET /runs/{id}/file-io never advertises an artifact_key the portal
+        // cannot serve. When the worker runs elsewhere the follow-up multipart upload
+        // to /worker/file-io/{id}/artifact is what fills these in.
+        $workerPaths = is_array($body['artifact_paths'] ?? null) ? $body['artifact_paths'] : [];
+        $localPaths  = [];
+        foreach ($workerPaths as $key => $path) {
+            if (is_string($path) && $path !== '' && is_file($path)) {
+                $localPaths[(string) $key] = $path;
+            }
+        }
+
+        $evidence = is_array($body['evidence'] ?? null) ? $body['evidence'] : [];
+        if ($workerPaths !== []) {
+            $evidence['worker_artifact_paths'] = $workerPaths;
+        }
+
+        $tests = new FileIoTestsModel();
+        $testId = $tests->record([
+            'qa_run_id'           => (string) $session['qa_run_id'],
+            'session_id'          => $sessionId,
+            'product_name'        => (string) ($run['product_name'] ?? 'unknown'),
+            'scenario_key'        => $scenario,
+            'direction'           => $direction,
+            'fixture_name'        => isset($body['fixture_name']) ? (string) $body['fixture_name'] : null,
+            'upload_ok'           => (bool) ($body['upload_ok'] ?? false),
+            'download_ok'         => (bool) ($body['download_ok'] ?? false),
+            'compare_status'      => $status,
+            'source_sha256'       => $body['source_sha256'] ?? null,
+            'result_sha256'       => $body['result_sha256'] ?? null,
+            'source_mime'         => $body['source_mime'] ?? null,
+            'result_mime'         => $body['result_mime'] ?? null,
+            'source_bytes'        => isset($body['source_bytes']) ? (int) $body['source_bytes'] : null,
+            'result_bytes'        => isset($body['result_bytes']) ? (int) $body['result_bytes'] : null,
+            'structure_ok'        => (bool) ($body['structure_ok'] ?? false),
+            'structure_notes'     => $body['structure_notes'] ?? null,
+            'rows_expected'       => isset($body['rows_expected']) ? (int) $body['rows_expected'] : null,
+            'rows_found'          => isset($body['rows_found']) ? (int) $body['rows_found'] : null,
+            'mismatched_cells'    => isset($body['mismatched_cells']) ? (int) $body['mismatched_cells'] : null,
+            'mismatches_json'     => is_array($body['mismatches'] ?? null) ? $body['mismatches'] : null,
+            'totals_expected'     => is_array($body['totals_expected'] ?? null) ? $body['totals_expected'] : null,
+            'totals_found'        => is_array($body['totals_found'] ?? null) ? $body['totals_found'] : null,
+            'data_verified'       => array_key_exists('data_verified', $body) && $body['data_verified'] !== null
+                ? (bool) $body['data_verified']
+                : null,
+            'verification_notes'  => $body['verification_notes'] ?? null,
+            'artifact_paths_json' => $localPaths !== [] ? $localPaths : null,
+            'evidence_json'       => $evidence !== [] ? $evidence : null,
+        ]);
+
+        $this->recordEvent(
+            $sessionId,
+            (string) $session['qa_run_id'],
+            'file_io',
+            'File I/O scenario "' . $scenario . '" finished with status ' . $status . '.',
+            ['metadata' => [
+                'scenario_key'   => $scenario,
+                'direction'      => $direction,
+                'compare_status' => $status,
+                'data_verified'  => $body['data_verified'] ?? null,
+            ]]
+        );
+
+        return $this->ok(['id' => $testId, 'file_io_test' => $tests->find($testId)], 201);
+    }
+
+    /**
+     * Worker uploads one artifact belonging to a file I/O test (fixture or download),
+     * so the portal can serve it later even when the worker host is elsewhere.
+     */
+    public function uploadFileIoArtifact(int $testId)
+    {
+        $tests = new FileIoTestsModel();
+        $test  = $tests->find($testId);
+        if (! $test) {
+            return $this->fail('File I/O test not found.', 404);
+        }
+
+        $file = $this->request->getFile('file');
+        $key  = trim((string) ($this->request->getPost('key') ?? 'artifact'));
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('No file uploaded. ' . ($file ? $file->getErrorString() : ''), 400);
+        }
+
+        $session = (new SessionsModel())->find((int) $test['session_id']);
+        if (! $session) {
+            return $this->fail('Session not found.', 404);
+        }
+        $run = (new RunsModel())->find($session['qa_run_id']);
+        $dir = Services::reportService()->sessionFileIoDirectory($session, $run ?: null)
+            . '/' . preg_replace('/[^a-z0-9._-]+/i', '-', (string) $test['scenario_key']);
+        if (! is_dir($dir) && ! @mkdir($dir, 0775, true) && ! is_dir($dir)) {
+            return $this->fail('Cannot create file I/O directory on API host. Check QA_REPORTS_DIR permissions.', 500);
+        }
+
+        $safe = preg_replace('/[^a-zA-Z0-9._-]+/', '-', (string) $file->getClientName()) ?: $file->getRandomName();
+        $name = preg_replace('/[^a-z0-9._-]+/i', '-', $key) . '-' . trim((string) $safe, '.-');
+        if (! $file->hasMoved()) {
+            $file->move($dir, $name, true);
+        }
+
+        $paths = is_array($test['artifact_paths_json'] ?? null) ? $test['artifact_paths_json'] : [];
+        $paths[$key] = $dir . '/' . $name;
+        $tests->update($testId, ['artifact_paths_json' => $paths]);
+
+        return $this->ok(['key' => $key, 'path' => $paths[$key]]);
+    }
+
+    /**
+     * Prefer dedicated worker identity from query / header / body.
+     * Never fall back to PHP gethostname() (legacy shared host confusion).
+     */
+    private function resolveWorkerId(): string
+    {
+        $candidates = [
+            $this->request->getGet('worker_id'),
+            $this->request->getHeaderLine('X-Worker-Id'),
+        ];
+        $body = $this->input();
+        if (is_array($body)) {
+            $candidates[] = $body['worker_id'] ?? null;
+        }
+
+        foreach ($candidates as $raw) {
+            $id = trim((string) $raw);
+            if ($id !== '') {
+                return $id;
+            }
+        }
+
+        return WorkerStatusService::DEFAULT_WORKER_ID;
+    }
+
     private function recordEvent(int $sessionId, string $qaRunId, string $type, string $message, array $extra = []): void
     {
         try {
@@ -657,10 +845,16 @@ class WorkerController extends BaseApiController
             return null;
         }
 
-        // Prefer env-specific steps (e.g. prod_basic = login only, no company create).
+        // Prefer env-specific steps (observer-only tiers = login only, no company create).
+        // Templates authored before the five-tier rename still key on gh/prod_basic/prod_full.
         $byEnv = $tpl['steps_by_env'] ?? null;
-        if (is_array($byEnv) && $environment !== '' && ! empty($byEnv[$environment]) && is_array($byEnv[$environment])) {
-            $tpl['steps'] = $byEnv[$environment];
+        if (is_array($byEnv) && $environment !== '') {
+            foreach (Environments::templateKeys($environment) as $key) {
+                if (! empty($byEnv[$key]) && is_array($byEnv[$key])) {
+                    $tpl['steps'] = $byEnv[$key];
+                    break;
+                }
+            }
         }
 
         return $tpl;

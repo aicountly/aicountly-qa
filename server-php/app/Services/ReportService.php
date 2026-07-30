@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\FileIoTestsModel;
 use App\Models\RunDecisionsModel;
 use App\Models\ReportsModel;
 use App\Models\RunsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
 use App\Models\ValidationResultsModel;
+use Config\Environments;
 
 /**
  * Assembles session and final consolidated reports (HTML + JSON) and writes them
@@ -29,15 +31,37 @@ class ReportService
         $validations = (new ValidationResultsModel())->where('session_id', $sessionId)->findAll();
         $decisions = (new RunDecisionsModel())->where('session_id', $sessionId)->orderBy('created_at')->findAll();
         $run = (new RunsModel())->find($session['qa_run_id']);
+        $fileIo = (new FileIoTestsModel())->forSession($sessionId);
+
+        $resultJson  = is_array($result['result_json'] ?? null) ? $result['result_json'] : [];
+        $failedSteps = array_values(array_filter(
+            (array) ($resultJson['failed_steps'] ?? []),
+            static fn ($step): bool => is_array($step)
+        ));
 
         $json = [
             'qa_run_id'        => $session['qa_run_id'],
+            'kind'             => 'session',
             'session'          => $session,
+            'run'              => $run,
+            'environment'      => [
+                'value'         => Environments::normalize((string) ($run['environment'] ?? '')),
+                'label'         => Environments::label((string) ($run['environment'] ?? '')),
+                'observer_only' => Environments::isObserverOnly((string) ($run['environment'] ?? '')),
+            ],
             'result'           => $result,
+            'failed_steps'     => $failedSteps,
             'validations'      => $validations,
             'decisions_taken'  => $decisions,
+            'file_io_tests'    => $fileIo,
+            'file_io_summary'  => FileIoTestsModel::summarise($fileIo),
+            'evidence'         => $this->collectEvidence($result),
             'generated_at'     => gmdate('c'),
         ];
+        $json['human_summary'] = $this->sessionHumanSummary($json);
+
+        $markdown = (new CursorPromptBuilder())->forSession($json);
+        $json['developer_prompt_pack'] = $markdown;
 
         $jsonBody = json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         $htmlBody = $this->renderSessionHtml($json);
@@ -45,7 +69,11 @@ class ReportService
         $dir = $this->sessionDir($session, $run);
         $jsonPath = $dir . '/report.json';
         $htmlPath = $dir . '/report.html';
+        $mdPath   = $dir . '/report.cursor-prompts.md';
         $written  = $this->writeReportFiles($dir, $jsonPath, $jsonBody, $htmlPath, $htmlBody);
+        if ($written) {
+            @file_put_contents($mdPath, $markdown);
+        }
 
         $reportId = $this->upsertReportRow([
             'qa_run_id'    => $session['qa_run_id'],
@@ -58,14 +86,17 @@ class ReportService
         ], 'session', $sessionId);
 
         return [
-            'ok'          => true,
-            'id'          => $reportId,
-            'qa_run_id'   => $session['qa_run_id'],
-            'html'        => $htmlPath,
-            'json'        => $jsonPath,
-            'written'     => $written,
-            'html_body'   => $htmlBody,
-            'json_body'   => $jsonBody,
+            'ok'            => true,
+            'id'            => $reportId,
+            'qa_run_id'     => $session['qa_run_id'],
+            'html'          => $htmlPath,
+            'json'          => $jsonPath,
+            'prompts'       => $mdPath,
+            'written'       => $written,
+            'html_body'     => $htmlBody,
+            'json_body'     => $jsonBody,
+            'prompts_body'  => $markdown,
+            'human_summary' => $json['human_summary'],
         ];
     }
 
@@ -79,13 +110,19 @@ class ReportService
         $json        = $payload['json'];
         $totals      = $payload['totals'];
         $run         = $payload['run'];
+        $markdown    = (new CursorPromptBuilder())->forRun($json);
+        $json['developer_prompt_pack'] = $markdown;
         $jsonBody    = json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         $htmlBody    = $this->renderFinalHtml($json);
 
         $dir      = $this->runDir($run);
         $jsonPath = $dir . '/consolidated.json';
         $htmlPath = $dir . '/consolidated.html';
+        $mdPath   = $dir . '/consolidated.cursor-prompts.md';
         $written  = $this->writeReportFiles($dir, $jsonPath, $jsonBody, $htmlPath, $htmlBody);
+        if ($written) {
+            @file_put_contents($mdPath, $markdown);
+        }
 
         (new RunsModel())->update($qaRunId, [
             'status'       => $totals['failed'] > 0 ? 'failed' : 'completed',
@@ -104,14 +141,16 @@ class ReportService
         ], 'final', null, $qaRunId);
 
         return [
-            'ok'        => true,
-            'id'        => $reportId,
-            'html'      => $htmlPath,
-            'json'      => $jsonPath,
-            'totals'    => $totals,
-            'written'   => $written,
-            'html_body' => $htmlBody,
-            'json_body' => $jsonBody,
+            'ok'           => true,
+            'id'           => $reportId,
+            'html'         => $htmlPath,
+            'json'         => $jsonPath,
+            'prompts'      => $mdPath,
+            'totals'       => $totals,
+            'written'      => $written,
+            'html_body'    => $htmlBody,
+            'json_body'    => $jsonBody,
+            'prompts_body' => $markdown,
         ];
     }
 
@@ -139,28 +178,218 @@ class ReportService
         $results     = (new SessionResultsModel())->where('qa_run_id', $qaRunId)->findAll();
         $validations = (new ValidationResultsModel())->where('qa_run_id', $qaRunId)->findAll();
         $decisions   = (new RunDecisionsModel())->where('qa_run_id', $qaRunId)->orderBy('created_at')->findAll();
+        $fileIo      = (new FileIoTestsModel())->forRun($qaRunId);
+        $reports     = (new ReportsModel())->where('qa_run_id', $qaRunId)->where('kind', 'session')->findAll();
 
         $resultsBySession = [];
         foreach ($results as $r) {
             $resultsBySession[$r['session_id']] = $r;
+        }
+        $reportBySession = [];
+        foreach ($reports as $report) {
+            if (! empty($report['session_id'])) {
+                $reportBySession[(int) $report['session_id']] = $report;
+            }
         }
 
         $totals = $this->summarise($sessions, $results, $validations);
 
         $json = [
             'qa_run_id'    => $qaRunId,
+            'kind'         => 'final',
             'run'          => $run,
+            'environment'  => [
+                'value'         => Environments::normalize((string) ($run['environment'] ?? '')),
+                'label'         => Environments::label((string) ($run['environment'] ?? '')),
+                'observer_only' => Environments::isObserverOnly((string) ($run['environment'] ?? '')),
+            ],
             'totals'       => $totals,
-            'sessions'     => array_map(static function ($s) use ($resultsBySession) {
+            'top_errors'   => $this->topErrors($validations),
+            'sessions'     => array_map(static function ($s) use ($resultsBySession, $reportBySession) {
+                $sid = (int) $s['id'];
                 $s['result'] = $resultsBySession[$s['id']] ?? null;
+                $s['report'] = isset($reportBySession[$sid])
+                    ? [
+                        'html_url'    => 'api/v1/reports/session/' . $sid . '/html',
+                        'json_url'    => 'api/v1/reports/session/' . $sid . '/json',
+                        'prompts_url' => 'api/v1/reports/session/' . $sid . '/prompts',
+                    ]
+                    : null;
                 return $s;
             }, $sessions),
             'validations'  => $validations,
             'decisions_taken' => $decisions,
+            'file_io_tests'   => $fileIo,
+            'file_io_summary' => FileIoTestsModel::summarise($fileIo),
             'generated_at' => gmdate('c'),
         ];
+        $json['human_summary'] = $this->runHumanSummary($json);
 
         return ['ok' => true, 'json' => $json, 'totals' => $totals, 'run' => $run];
+    }
+
+    /**
+     * Plain-English "what broke" for the top of a session report.
+     *
+     * @param array<string, mixed> $json
+     */
+    private function sessionHumanSummary(array $json): string
+    {
+        $session = (array) ($json['session'] ?? []);
+        $result  = (array) ($json['result'] ?? []);
+        $status  = (string) ($result['status'] ?? $session['status'] ?? 'unknown');
+        $name    = (string) ($session['name'] ?? 'This session');
+
+        $failed = array_values(array_filter(
+            (array) ($json['validations'] ?? []),
+            static fn ($v): bool => empty($v['passed'])
+        ));
+        $steps   = (array) ($json['failed_steps'] ?? []);
+        $fileIo  = (array) ($json['file_io_tests'] ?? []);
+        $badIo   = array_values(array_filter(
+            $fileIo,
+            static fn ($t): bool => in_array((string) ($t['compare_status'] ?? ''), ['fail', 'partial'], true)
+        ));
+
+        if ($failed === [] && $steps === [] && $badIo === []) {
+            return $name . ' completed with status "' . $status . '". No errors, no failed validations, '
+                . 'and no data mismatches were detected.';
+        }
+
+        $parts = [$name . ' finished with status "' . $status . '".'];
+
+        if ($steps !== []) {
+            $first = $steps[0];
+            $parts[] = 'The workflow broke at step "' . ($first['kind'] ?? 'unknown') . '": '
+                . ($first['error'] ?? 'no error text was captured') . '.';
+        }
+
+        if ($failed !== []) {
+            $codes = array_slice(array_values(array_unique(array_map(
+                static fn ($v): string => (string) ($v['rule_code'] ?? 'UNKNOWN'),
+                $failed
+            ))), 0, 5);
+            $parts[] = count($failed) . ' validation(s) failed (' . implode(', ', $codes) . ').';
+            $first = $failed[0];
+            if (! empty($first['expected']) || ! empty($first['actual'])) {
+                $parts[] = 'For example, ' . ($first['rule_code'] ?? 'a rule') . ' expected "'
+                    . ($first['expected'] ?? '') . '" but the application produced "'
+                    . ($first['actual'] ?? '') . '".';
+            }
+        }
+
+        if ($badIo !== []) {
+            $mismatched = array_sum(array_map(
+                static fn ($t): int => (int) ($t['mismatched_cells'] ?? 0),
+                $badIo
+            ));
+            $parts[] = count($badIo) . ' file I/O scenario(s) did not round-trip cleanly'
+                . ($mismatched > 0 ? ', with ' . $mismatched . ' cell value(s) changed between upload and export' : '')
+                . '.';
+        }
+
+        return implode(' ', $parts);
+    }
+
+    /** @param array<string, mixed> $json */
+    private function runHumanSummary(array $json): string
+    {
+        $totals = (array) ($json['totals'] ?? []);
+        $io     = (array) ($json['file_io_summary'] ?? []);
+        $run    = (array) ($json['run'] ?? []);
+
+        $parts = [
+            'QA run ' . ($json['qa_run_id'] ?? '') . ' on ' . ($run['product_name'] ?? 'the product')
+            . ' (' . Environments::label((string) ($run['environment'] ?? '')) . ') executed '
+            . (int) ($totals['total'] ?? 0) . ' session(s): ' . (int) ($totals['passed'] ?? 0) . ' passed, '
+            . (int) ($totals['failed'] ?? 0) . ' failed, ' . (int) ($totals['skipped'] ?? 0) . ' skipped.',
+        ];
+
+        $top = (array) ($json['top_errors'] ?? []);
+        if ($top !== []) {
+            $first = $top[0];
+            $parts[] = 'The most frequent error is ' . ($first['rule_code'] ?? 'unknown') . ' ('
+                . (int) ($first['count'] ?? 0) . ' occurrence(s)).';
+        }
+
+        if ((int) ($io['total'] ?? 0) > 0) {
+            $parts[] = 'File I/O: ' . (int) ($io['by_status']['pass'] ?? 0) . ' of ' . (int) $io['total']
+                . ' scenario(s) passed'
+                . ($io['pass_rate'] !== null ? ' (' . $io['pass_rate'] . '% pass rate)' : '')
+                . ', with ' . (int) ($io['mismatched_cells'] ?? 0) . ' mismatched cell(s) across '
+                . (int) ($io['data_verifiable'] ?? 0) . ' data-verifiable artifact(s).';
+        }
+
+        return implode(' ', $parts);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $validations
+     * @return list<array<string, mixed>>
+     */
+    private function topErrors(array $validations): array
+    {
+        $grouped = [];
+        foreach ($validations as $validation) {
+            if (! empty($validation['passed'])) {
+                continue;
+            }
+            $code = (string) ($validation['rule_code'] ?? 'UNKNOWN');
+            $grouped[$code] ??= [
+                'rule_code' => $code,
+                'count'     => 0,
+                'severity'  => (string) ($validation['severity'] ?? 'medium'),
+                'expected'  => $validation['expected'] ?? null,
+                'actual'    => $validation['actual'] ?? null,
+            ];
+            $grouped[$code]['count']++;
+        }
+
+        usort($grouped, static fn (array $a, array $b): int => $b['count'] <=> $a['count']);
+
+        return array_slice(array_values($grouped), 0, 10);
+    }
+
+    /**
+     * Inline screenshots as data URIs so the HTML report stays portable when
+     * downloaded or emailed. Large captures are linked, not embedded.
+     *
+     * @param array<string, mixed>|null $result
+     * @return list<array<string, mixed>>
+     */
+    private function collectEvidence(?array $result): array
+    {
+        $paths = (array) ($result['screenshot_paths'] ?? []);
+        $out   = [];
+        $budget = 12 * 1024 * 1024; // total embed budget for one report
+
+        foreach ($paths as $path) {
+            $path = (string) $path;
+            if ($path === '') {
+                continue;
+            }
+            $item = ['name' => basename($path), 'path' => $path, 'embedded' => false, 'data_uri' => null];
+
+            if (is_file($path)) {
+                $size = (int) @filesize($path);
+                if ($size > 0 && $size <= 3 * 1024 * 1024 && $size <= $budget) {
+                    $bytes = @file_get_contents($path);
+                    if ($bytes !== false) {
+                        $mime = str_ends_with(strtolower($path), '.jpg') || str_ends_with(strtolower($path), '.jpeg')
+                            ? 'image/jpeg'
+                            : 'image/png';
+                        $item['data_uri'] = 'data:' . $mime . ';base64,' . base64_encode($bytes);
+                        $item['embedded'] = true;
+                        $budget -= $size;
+                    }
+                }
+                $item['bytes'] = $size;
+            }
+
+            $out[] = $item;
+        }
+
+        return $out;
     }
 
     private function writeReportFiles(string $dir, string $jsonPath, string $jsonBody, string $htmlPath, string $htmlBody): bool
@@ -362,6 +591,12 @@ class ReportService
         return $base . '/session-' . $order . '/screenshots';
     }
 
+    /** Worker upload folder for file I/O artifacts: …/session-NNN/file-io */
+    public function sessionFileIoDirectory(array $session, ?array $run = null): string
+    {
+        return dirname($this->sessionScreenshotsDirectory($session, $run)) . '/file-io';
+    }
+
     /** Recursively delete the run folder (screenshots, reports, logs) from disk. */
     public function deleteRunArtifacts(string $qaRunId, ?string $productName = null): bool
     {
@@ -406,12 +641,13 @@ class ReportService
         $result    = $json['result'] ?? [];
         $valids    = $json['validations'] ?? [];
         $decisionRows = $this->renderDecisionRows($json['decisions_taken'] ?? []);
-        $valRows   = '';
+
+        $valRows = '';
         foreach ($valids as $v) {
-            $ok = $v['passed'] ? 'pass' : 'fail';
             $valRows .= sprintf(
-                '<tr class="%s"><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
-                htmlspecialchars($ok),
+                '<tr class="%s"><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                empty($v['passed']) ? 'fail' : 'pass',
+                empty($v['passed']) ? 'FAIL' : 'pass',
                 htmlspecialchars((string) $v['rule_code']),
                 htmlspecialchars((string) $v['severity']),
                 htmlspecialchars((string) ($v['expected'] ?? '')),
@@ -419,31 +655,121 @@ class ReportService
                 htmlspecialchars((string) ($v['notes'] ?? ''))
             );
         }
+
+        $stepRows = '';
+        foreach ((array) ($json['failed_steps'] ?? []) as $step) {
+            $stepRows .= sprintf(
+                '<tr class="fail"><td>%s</td><td>%s</td><td>%s</td></tr>',
+                htmlspecialchars((string) ($step['index'] ?? '')),
+                htmlspecialchars((string) ($step['kind'] ?? '')),
+                htmlspecialchars((string) ($step['error'] ?? ''))
+            );
+        }
+
         return $this->htmlShell(
             'QA Session — ' . ($session['name'] ?? ''),
             sprintf(
                 '<h1>QA Session Report</h1>
-                 <p class="muted">%s · %s · %s</p>
+                 <p class="muted">%s · %s · %s · %s</p>
                  <h2>%s</h2>
                  <p>Severity: <span class="badge sev-%s">%s</span> · Status: <strong>%s</strong></p>
+                 <div class="summary"><strong>What happened:</strong> %s</div>
+                 <h3>Failed steps</h3>
+                 <table><thead><tr><th>#</th><th>Step</th><th>Error</th></tr></thead><tbody>%s</tbody></table>
                  <h3>Validations</h3>
                  <table><thead><tr><th>Result</th><th>Rule</th><th>Severity</th><th>Expected</th><th>Actual</th><th>Notes</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>File I/O &amp; data verification</h3>
+                 %s
                  <h3>Decisions taken</h3>
                  <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>Evidence</h3>
+                 %s
+                 <h3>Developer prompt pack</h3>
+                 <pre class="md">%s</pre>
                  <h3>Result JSON</h3>
                  <pre>%s</pre>',
                 htmlspecialchars((string) $session['qa_run_id']),
+                htmlspecialchars((string) ($json['environment']['label'] ?? '')),
                 htmlspecialchars((string) ($session['module'] ?? '')),
                 htmlspecialchars((string) ($session['sub_module'] ?? '')),
                 htmlspecialchars((string) $session['name']),
                 htmlspecialchars((string) ($result['severity'] ?? 'low')),
                 htmlspecialchars((string) ($result['severity'] ?? 'low')),
                 htmlspecialchars((string) ($result['status'] ?? $session['status'])),
+                htmlspecialchars((string) ($json['human_summary'] ?? '')),
+                $stepRows ?: '<tr><td colspan="3" class="muted">No step failed.</td></tr>',
                 $valRows ?: '<tr><td colspan="6" class="muted">No validations recorded.</td></tr>',
+                $this->renderFileIoTable((array) ($json['file_io_tests'] ?? []), (array) ($json['file_io_summary'] ?? [])),
                 $decisionRows,
+                $this->renderEvidence((array) ($json['evidence'] ?? [])),
+                htmlspecialchars((string) ($json['developer_prompt_pack'] ?? '')),
                 htmlspecialchars(json_encode($result['result_json'] ?? [], JSON_PRETTY_PRINT))
             )
         );
+    }
+
+    /**
+     * @param list<array<string, mixed>> $tests
+     * @param array<string, mixed>       $summary
+     */
+    private function renderFileIoTable(array $tests, array $summary): string
+    {
+        if ($tests === []) {
+            return '<p class="muted">No file I/O scenario ran for this scope.</p>';
+        }
+
+        $rows = '';
+        foreach ($tests as $test) {
+            $status = (string) ($test['compare_status'] ?? '');
+            $verified = $test['data_verified'] ?? null;
+            $rows .= sprintf(
+                '<tr class="%s"><td>%s</td><td>%s</td><td class="status status-%s">%s</td>'
+                . '<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                in_array($status, ['fail', 'partial'], true) ? 'fail' : 'pass',
+                htmlspecialchars((string) ($test['scenario_key'] ?? '')),
+                htmlspecialchars((string) ($test['direction'] ?? '')),
+                htmlspecialchars($status),
+                htmlspecialchars($status),
+                htmlspecialchars((string) ($test['result_mime'] ?? '—')),
+                htmlspecialchars(($test['rows_expected'] ?? '—') . ' / ' . ($test['rows_found'] ?? '—')),
+                htmlspecialchars((string) ((int) ($test['mismatched_cells'] ?? 0))),
+                htmlspecialchars($verified === null ? 'n/a' : ($verified ? 'verified' : 'MISMATCH')),
+                htmlspecialchars((string) ($test['verification_notes'] ?? $test['structure_notes'] ?? ''))
+            );
+        }
+
+        $head = sprintf(
+            '<p class="muted">%d scenario(s), %s pass rate, %d mismatched cell(s).</p>',
+            (int) ($summary['total'] ?? count($tests)),
+            $summary['pass_rate'] === null ? 'n/a' : ($summary['pass_rate'] . '%'),
+            (int) ($summary['mismatched_cells'] ?? 0)
+        );
+
+        return $head . '<table><thead><tr><th>Scenario</th><th>Direction</th><th>Status</th><th>MIME</th>'
+            . '<th>Rows exp/found</th><th>Bad cells</th><th>Data</th><th>Notes</th></tr></thead><tbody>'
+            . $rows . '</tbody></table>';
+    }
+
+    /** @param list<array<string, mixed>> $evidence */
+    private function renderEvidence(array $evidence): string
+    {
+        if ($evidence === []) {
+            return '<p class="muted">No screenshots were captured.</p>';
+        }
+
+        $out = '<div class="shots">';
+        foreach ($evidence as $item) {
+            $name = htmlspecialchars((string) ($item['name'] ?? 'evidence'));
+            if (! empty($item['data_uri'])) {
+                $out .= '<figure><img src="' . $item['data_uri'] . '" alt="' . $name . '"><figcaption>'
+                    . $name . '</figcaption></figure>';
+            } else {
+                $out .= '<figure class="missing"><figcaption>' . $name
+                    . ' <span class="muted">(not embedded — open from the portal)</span></figcaption></figure>';
+            }
+        }
+
+        return $out . '</div>';
     }
 
     private function renderFinalHtml(array $json): string
@@ -453,24 +779,43 @@ class ReportService
         foreach ($json['sessions'] as $s) {
             $r = $s['result'] ?? [];
             $status = $r['status'] ?? $s['status'] ?? 'queued';
+            $link = ! empty($s['report']['html_url'])
+                ? '<a href="/' . htmlspecialchars((string) $s['report']['html_url']) . '">Open</a>'
+                : '<span class="muted">—</span>';
             $rows .= sprintf(
-                '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="status status-%s">%s</td><td>%s</td></tr>',
+                '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="status status-%s">%s</td><td>%s</td><td>%s</td></tr>',
                 htmlspecialchars((string) $s['order_index']),
                 htmlspecialchars((string) $s['name']),
                 htmlspecialchars((string) ($s['module'] ?? '')),
                 htmlspecialchars((string) ($s['sub_module'] ?? '')),
                 htmlspecialchars($status),
                 htmlspecialchars($status),
-                htmlspecialchars((string) ($r['severity'] ?? ''))
+                htmlspecialchars((string) ($r['severity'] ?? '')),
+                $link
             );
         }
+
+        $errorRows = '';
+        foreach ((array) ($json['top_errors'] ?? []) as $error) {
+            $errorRows .= sprintf(
+                '<tr class="fail"><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+                htmlspecialchars((string) ($error['rule_code'] ?? '')),
+                (int) ($error['count'] ?? 0),
+                htmlspecialchars((string) ($error['severity'] ?? '')),
+                htmlspecialchars((string) ($error['expected'] ?? '')),
+                htmlspecialchars((string) ($error['actual'] ?? ''))
+            );
+        }
+
         $sev = $totals['severity'] ?? [];
         $decisionRows = $this->renderDecisionRows($json['decisions_taken'] ?? []);
+
         return $this->htmlShell(
             'QA Consolidated Report — ' . ($json['qa_run_id'] ?? ''),
             sprintf(
                 '<h1>QA Consolidated Report</h1>
                  <p class="muted">%s · %s · %s</p>
+                 <div class="summary"><strong>Summary:</strong> %s</div>
                  <div class="cards">
                     <div class="card"><div class="k">%d</div><div class="v">Sessions</div></div>
                     <div class="card pass"><div class="k">%d</div><div class="v">Passed</div></div>
@@ -479,12 +824,19 @@ class ReportService
                     <div class="card critical"><div class="k">%d</div><div class="v">Critical</div></div>
                     <div class="card high"><div class="k">%d</div><div class="v">High</div></div>
                  </div>
-                 <table><thead><tr><th>#</th><th>Session</th><th>Module</th><th>Sub-module</th><th>Status</th><th>Severity</th></tr></thead><tbody>%s</tbody></table>
+                 <table><thead><tr><th>#</th><th>Session</th><th>Module</th><th>Sub-module</th><th>Status</th><th>Severity</th><th>Report</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>Top errors</h3>
+                 <table><thead><tr><th>Rule</th><th>Count</th><th>Severity</th><th>Expected</th><th>Actual</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>File I/O &amp; data verification</h3>
+                 %s
                  <h3>Decisions taken</h3>
-                 <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>',
+                 <table><thead><tr><th>Situation</th><th>Choice</th><th>Source</th><th>Status</th></tr></thead><tbody>%s</tbody></table>
+                 <h3>Developer prompt pack</h3>
+                 <pre class="md">%s</pre>',
                 htmlspecialchars($json['qa_run_id'] ?? ''),
                 htmlspecialchars($json['run']['product_name'] ?? ''),
-                htmlspecialchars($json['run']['environment'] ?? ''),
+                htmlspecialchars((string) ($json['environment']['label'] ?? $json['run']['environment'] ?? '')),
+                htmlspecialchars((string) ($json['human_summary'] ?? '')),
                 (int) ($totals['total'] ?? 0),
                 (int) ($totals['passed'] ?? 0),
                 (int) ($totals['failed'] ?? 0),
@@ -492,7 +844,10 @@ class ReportService
                 (int) ($sev['critical'] ?? 0),
                 (int) ($sev['high'] ?? 0),
                 $rows,
-                $decisionRows
+                $errorRows ?: '<tr><td colspan="5" class="muted">No validation failed.</td></tr>',
+                $this->renderFileIoTable((array) ($json['file_io_tests'] ?? []), (array) ($json['file_io_summary'] ?? [])),
+                $decisionRows,
+                htmlspecialchars((string) ($json['developer_prompt_pack'] ?? ''))
             )
         );
     }
@@ -535,6 +890,13 @@ th{background:var(--g50);color:var(--g);font-weight:600}tr.pass td{background:#f
 .card.pass{border-color:var(--g);color:var(--g)}.card.fail{border-color:var(--red);color:var(--red)}.card.skip{color:var(--gry)}
 .card.critical{border-color:var(--red);color:var(--red)}.card.high{border-color:var(--ylw);color:var(--ylw)}
 pre{background:#0b1020;color:#e2e8f0;padding:14px;border-radius:8px;overflow:auto;font-size:12px;line-height:1.45}
+pre.md{background:#f8fafc;color:#0f172a;border:1px solid var(--line);white-space:pre-wrap}
+.summary{border-left:3px solid var(--g);background:var(--g50);padding:12px 14px;border-radius:0 8px 8px 0;margin:12px 0 20px;font-size:14px}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:8px}
+.shots figure{margin:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.shots img{width:100%;display:block}
+.shots figcaption{padding:8px 10px;font-size:12px;color:var(--mid);border-top:1px solid var(--line)}
+.shots figure.missing{padding:10px;color:var(--mut);font-size:12px}
 </style></head><body><div class="container">' . $body . '<footer style="margin-top:48px;color:#888;font-size:12px">AICOUNTLY QA Portal — testing &amp; reporting only.</footer></div></body></html>';
     }
 }

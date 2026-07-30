@@ -1,0 +1,14 @@
+Calendar scheduling correctness run.
+
+1. Create single events, all-day events and a recurring series with known start/end times and a known timezone.
+2. Invite an attendee, then reschedule and cancel one occurrence of the series.
+3. Import the deterministic ICS fixture, then export the calendar.
+
+Verify:
+- Stored start and end times match what was entered, in the same timezone, after a page reload.
+- A recurring series expands to the expected number of occurrences in the expected slots.
+- Editing one occurrence does not silently modify the whole series (or vice versa, if that is the configured behaviour).
+- The exported ICS contains the same UID, DTSTART, DTEND and RRULE values as the fixture.
+- Conflicts and double bookings are detected where the product claims to detect them.
+
+Report as errors any time shift, missing occurrence, dropped attendee, or ICS field lost on round trip, with expected versus actual.

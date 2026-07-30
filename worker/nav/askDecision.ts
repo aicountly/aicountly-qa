@@ -3,6 +3,9 @@
  * Plain question/options — no smoke phrasing / brain layer.
  */
 
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Page } from 'playwright'
 import {
   createDecision,
@@ -10,8 +13,10 @@ import {
   getDecisionMemory,
   heartbeat,
   timeoutDecision,
+  uploadEvidence,
 } from '../apiClient.js'
 import type { DecisionOption, DecisionRow, Run, Session, TargetProfile } from '../types.js'
+import { normalizeEnvironment } from '../utils/environments.js'
 
 export type DecisionChoice = {
   option: DecisionOption
@@ -40,7 +45,7 @@ export async function askOrRecallDecision(input: AskDecisionInput): Promise<Deci
 
   const memory = await getDecisionMemory({
     product_name: input.profile.product_name || input.run.product_name,
-    environment: input.profile.environment || input.run.environment,
+    environment: normalizeEnvironment(input.profile.environment || input.run.environment),
     situation_key: input.situationKey,
   }).catch(() => null)
 
@@ -70,6 +75,10 @@ export async function askOrRecallDecision(input: AskDecisionInput): Promise<Deci
     console.warn(`[aicountly-qa-worker] Ignored invalid remembered decision for ${input.situationKey}`)
   }
 
+  // The operator card is far easier to answer with a picture of the blocked screen.
+  const screenshotPath = input.screenshotPath
+    ?? await captureDecisionScreenshot(input.page, input.session.id, input.situationKey)
+
   const created = await createDecision({
     session_id: input.session.id,
     qa_run_id: input.session.qa_run_id,
@@ -82,7 +91,7 @@ export async function askOrRecallDecision(input: AskDecisionInput): Promise<Deci
       title: await input.page.title().catch(() => ''),
       source: 'human',
     },
-    screenshot_path: input.screenshotPath,
+    screenshot_path: screenshotPath,
     memory_applied: false,
   })
 
@@ -128,6 +137,34 @@ export async function askOrRecallDecision(input: AskDecisionInput): Promise<Deci
 
 function resolveOption(selected: string, options: DecisionOption[]): DecisionOption | null {
   return options.find((o) => o.id === selected) ?? null
+}
+
+/**
+ * Screenshot the blocked screen and upload it as session evidence, returning the
+ * server-side path the API stored it at so the decision card can render it.
+ * A failure here must never stop the decision from being raised.
+ */
+async function captureDecisionScreenshot(
+  page: Page,
+  sessionId: number,
+  situationKey: string,
+): Promise<string | undefined> {
+  try {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-decision-'))
+    const name = `decision-${slug(situationKey)}-${Date.now()}.png`
+    const localPath = join(dir, name)
+    await page.screenshot({ path: localPath, fullPage: false })
+    // Only the API-side path is usable: the portal serves decision screenshots
+    // from inside the reports root, so a worker-local temp path would only ever
+    // 404. Leaving it unset makes the card say "no screenshot" instead.
+    return (await uploadEvidence(sessionId, localPath, 'decision')) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 }
 
 function sleep(ms: number): Promise<void> {

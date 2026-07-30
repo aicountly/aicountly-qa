@@ -98,4 +98,40 @@ Documented for agents and operators; implemented under `worker/`:
 - Jump To from `runtime_contract.login.jump_to_candidates` (candidate order wins)
 - `expect_login_outcome`, `expect_product_host` / `AUTH_PRODUCT_HOST_MATCH`
 - `ask_decision` + decision memory / timeout (30 minutes) with heartbeats while `awaiting_decision`
-- Books File I/O step kinds; production asserts `blocked_by_safe_guard` without uploading
+- Manifest-driven File I/O with data verification; observer-only tiers assert `blocked_by_safe_guard` without uploading
+
+## Environment tiers in the worker
+
+`worker/utils/environments.ts` mirrors `server-php/app/Config/Environments.php`.
+Use `isObserverOnly()` / `allowsFileActions()` — never a `startsWith('production')`
+check, which would wrongly restrict `production_full_access`. Legacy values
+(`gh`, `prod_basic`, `prod_full`) arriving from an older API are normalized on
+the way in, and `templateKeys()` still reads legacy `steps_by_env` keys.
+
+`safeActionGuard` now takes `allowSafeDemo` from the target profile:
+observer-only tiers and profiles with `allow_safe_demo = false` never upload.
+
+## File I/O engine
+
+`worker/fileIo/` contains:
+
+| Module | Role |
+| --- | --- |
+| `manifest.ts` | Loads `samples/fixtures/manifest.json`, filters scenarios by product and by the screens the session reached, materializes fixtures into the session directory |
+| `transferHelpers.ts` | Selector-tolerant upload / download / expect-rejection primitives |
+| `compareArtifacts.ts` | SHA-256, MIME sniffing, and structure checks for CSV / ICS / PDF / XLSX |
+| `dataVerification.ts` | QA-only: row counts, key-column cell values, numeric totals within tolerance |
+| `fileIoEngine.ts` | Orchestrates gate → approval → transfer → compare → verify → persist |
+| `fileIoSteps.ts` | Legacy declarative step kinds for templates that script the flow explicitly |
+
+Results post to `POST /v1/worker/sessions/{id}/file-io`, then each artifact is
+copied to the API host via `POST /v1/worker/file-io/{testId}/artifact` so the
+portal can serve it even when the worker runs elsewhere. Full details:
+[QA-FILE-IO.md](./QA-FILE-IO.md).
+
+## Decision screenshots
+
+When the worker raises a decision it screenshots the blocked screen, uploads it
+through the evidence endpoint, and passes the stored path as `screenshot_path`,
+so the operator card shows an image instead of a bare question. A failure to
+capture never blocks the decision from being raised.

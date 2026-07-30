@@ -13,7 +13,7 @@ class RunsModel extends Model
     protected $useTimestamps = true;
 
     protected $allowedFields = [
-        'qa_run_id', 'target_profile_id', 'product_name', 'environment',
+        'qa_run_id', 'target_profile_id', 'product_name', 'environment', 'title',
         'created_by', 'status', 'started_at', 'completed_at', 'summary_json',
     ];
 

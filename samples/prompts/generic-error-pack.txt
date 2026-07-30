@@ -1,0 +1,13 @@
+Run the error-detection pack. The goal is to find things that are broken, not things that could be nicer.
+
+Walk every reachable module in scope and record:
+- Console errors and uncaught exceptions, with the screen and the stack.
+- Failed API calls (4xx/5xx) and any failure the UI swallowed without a visible message.
+- Blank screens, infinite spinners, and pages that never finish loading.
+- Broken navigation: menu items that lead nowhere, dead links, 404s inside the app.
+- Forms that fail to save, save silently without feedback, or lose entered values.
+- Grid and list screens that render no rows when rows are expected, or throw while paginating.
+
+For every failure capture a screenshot, the exact URL, the request that failed, and the expected versus actual behaviour.
+
+Skip UX polish, theme consistency, and competitor comparisons — those belong on the smoke portal. Report only defects.

@@ -1,0 +1,5 @@
+date,description,reference,debit,credit,balance
+2026-07-01,QA Opening Balance,QA-FIO-0001,0.00,10000.00,10000.00
+2026-07-02,QA Supplier Payment,QA-FIO-0002,1250.50,0.00,8749.50
+2026-07-03,QA Customer Receipt,QA-FIO-0003,0.00,2500.25,11249.75
+2026-07-04,QA Bank Charges,QA-FIO-0004,49.75,0.00,11200.00

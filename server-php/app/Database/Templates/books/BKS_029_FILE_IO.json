@@ -20,11 +20,15 @@
     { "kind": "file_upload_expect_rejected", "fixture": "fixtures/books-bank-statement-v1.csv", "override_mime": "image/png", "error_matches": "invalid|mime|file type|csv only|unsupported" }
   ],
   "steps_by_env": {
-    "prod_basic": [
+    "production_readonly": [
       { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
       { "kind": "assert_file_upload_blocked", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "expected": "blocked_by_safe_guard", "must_not_upload": true }
     ],
-    "prod_full": [
+    "production_restricted": [
+      { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
+      { "kind": "assert_file_upload_blocked", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "expected": "blocked_by_safe_guard", "must_not_upload": true }
+    ],
+    "production_full_access": [
       { "kind": "navigate_menu", "path": ["Banking", "Bank Statement Import"] },
       { "kind": "assert_file_upload_blocked", "selector_options": ["input[type=file]", "[data-test=file-import] input"], "expected": "blocked_by_safe_guard", "must_not_upload": true }
     ]

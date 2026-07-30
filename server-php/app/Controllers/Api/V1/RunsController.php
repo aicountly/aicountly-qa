@@ -2,15 +2,18 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
+use App\Models\ErrorRegisterModel;
+use App\Models\FileIoTestsModel;
 use App\Models\ReportsModel;
+use App\Models\RunDecisionsModel;
 use App\Models\RunsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
 use App\Models\TargetProfilesModel;
-use CodeIgniter\RESTful\ResourceController;
 use Config\Services;
 
-class RunsController extends ResourceController
+class RunsController extends BaseResourceApiController
 {
     protected $modelName = RunsModel::class;
     protected $format    = 'json';
@@ -171,13 +174,40 @@ class RunsController extends ResourceController
         if (($body['status'] ?? null) !== 'cancelled') {
             return parent::update($id);
         }
+
+        return $this->cancel($id);
+    }
+
+    /**
+     * Cancel every queued/active session and pending decision, then mark the run
+     * cancelled. Each cancelled session gets an Error Register entry so the run
+     * does not silently disappear from triage.
+     */
+    public function cancel($id = null)
+    {
+        if (! $this->roleAllowed(['Owner', 'QA Manager'])) {
+            return $this->failForbidden('Only an Owner or QA Manager can cancel a QA run.');
+        }
+
         $run = $this->model->find($id);
         if (! $run) {
             return $this->failNotFound();
         }
+        if (in_array((string) ($run['status'] ?? ''), ['cancelled', 'completed', 'failed'], true)) {
+            return $this->respond(['ok' => true, 'data' => $run, 'note' => 'Run was already finished.']);
+        }
+
+        $sessions = (new SessionsModel())
+            ->where('qa_run_id', $id)
+            ->whereIn('status', SessionsModel::ACTIVE)
+            ->findAll();
+        $decisions = (new RunDecisionsModel())
+            ->where('qa_run_id', $id)
+            ->where('status', 'pending')
+            ->findAll();
 
         $now = date('Y-m-d H:i:s');
-        $db = $this->model->db;
+        $db  = $this->model->db;
         $db->transStart();
         $db->table('qa_run_decisions')
             ->where('qa_run_id', $id)
@@ -189,12 +219,163 @@ class RunsController extends ResourceController
             ->update(['status' => 'cancelled', 'completed_at' => $now, 'updated_at' => $now]);
         $this->model->update($id, ['status' => 'cancelled', 'completed_at' => $now]);
         $db->transComplete();
+
         if (! $db->transStatus()) {
             return $this->fail('Failed to cancel QA run.', 500);
         }
-        Services::auditService()->log('qa_run_cancel', ['qa_run_id' => $id]);
 
-        return $this->respond(['ok' => true, 'data' => $this->model->find($id)]);
+        $this->registerCancellation((string) $id, $run, $sessions, $decisions);
+
+        Services::auditService()->log('qa_run_cancel', [
+            'qa_run_id' => $id,
+            'metadata'  => [
+                'sessions_cancelled'  => count($sessions),
+                'decisions_cancelled' => count($decisions),
+            ],
+        ]);
+
+        return $this->respond([
+            'ok'   => true,
+            'data' => [
+                'run'                 => $this->model->find($id),
+                'sessions_cancelled'  => count($sessions),
+                'decisions_cancelled' => count($decisions),
+            ],
+        ]);
+    }
+
+    /** Everything the QA run was still owed becomes a visible, triage-able error. */
+    private function registerCancellation(string $qaRunId, array $run, array $sessions, array $decisions): void
+    {
+        if ($sessions === [] && $decisions === []) {
+            return;
+        }
+
+        $names = array_slice(array_map(
+            static fn (array $s): string => (string) ($s['name'] ?? $s['template_code'] ?? ('session ' . $s['id'])),
+            $sessions
+        ), 0, 8);
+
+        $summary = 'QA run ' . $qaRunId . ' was cancelled with ' . count($sessions)
+            . ' session(s) unfinished and ' . count($decisions) . ' operator decision(s) still pending'
+            . ($names !== [] ? ': ' . implode(', ', $names) . '.' : '.');
+
+        (new ErrorRegisterModel())->upsertSignature([
+            'signature'                => sha1('run-cancelled|' . $qaRunId),
+            'title'                    => 'QA run cancelled before completion',
+            'severity'                 => 'medium',
+            'product_name'             => $run['product_name'] ?? null,
+            'module'                   => 'worker',
+            'last_seen_run_id'         => $qaRunId,
+            'last_session_id'          => isset($sessions[0]['id']) ? (int) $sessions[0]['id'] : null,
+            'sample_message'           => $summary,
+            'human_summary'            => $summary,
+            'developer_fix_prompt'     => 'QA run ' . $qaRunId . ' was cancelled mid-flight. Review why the remaining '
+                . 'sessions could not finish (blocked decisions, worker stall, or an unrecoverable target error), '
+                . 'then make that path either self-recovering or fail fast with a clear error.',
+            'suggested_developer_area' => 'QA run lifecycle / worker session recovery',
+        ]);
+
+        foreach ($decisions as $decision) {
+            (new ErrorRegisterModel())->upsertSignature([
+                'signature'                => sha1('decision-cancelled|' . $qaRunId . '|' . ($decision['situation_key'] ?? '')),
+                'title'                    => 'Decision cancelled by run cancellation: ' . ($decision['situation_key'] ?? ''),
+                'severity'                 => 'medium',
+                'product_name'             => $run['product_name'] ?? null,
+                'module'                   => 'worker',
+                'last_seen_run_id'         => $qaRunId,
+                'last_session_id'          => isset($decision['session_id']) ? (int) $decision['session_id'] : null,
+                'sample_message'           => (string) ($decision['question'] ?? ''),
+                'human_summary'            => 'The worker was blocked waiting on "' . ($decision['situation_key'] ?? '')
+                    . '" when the run was cancelled, so that path was never verified.',
+                'developer_fix_prompt'     => 'Make situation "' . ($decision['situation_key'] ?? '')
+                    . '" resolvable without an operator, or document the deterministic answer so QA can continue unattended.',
+                'suggested_developer_area' => 'QA worker decision handling',
+            ]);
+        }
+    }
+
+    /** File I/O verdicts for a run, shaped for the portal table. */
+    public function fileIo($id = null)
+    {
+        if (! $this->model->find($id)) {
+            return $this->failNotFound();
+        }
+
+        $rows = (new FileIoTestsModel())->forRun((string) $id);
+        $data = array_map(static function (array $row): array {
+            $paths = is_array($row['artifact_paths_json'] ?? null) ? $row['artifact_paths_json'] : [];
+
+            return [
+                'id'                 => (int) $row['id'],
+                'session_id'         => (int) $row['session_id'],
+                'scenario_key'       => $row['scenario_key'],
+                'direction'          => $row['direction'],
+                'fixture_name'       => $row['fixture_name'],
+                'compare_status'     => $row['compare_status'],
+                'upload_ok'          => (bool) $row['upload_ok'],
+                'download_ok'        => (bool) $row['download_ok'],
+                'source_sha256'      => $row['source_sha256'],
+                'result_sha256'      => $row['result_sha256'],
+                'source_mime'        => $row['source_mime'],
+                'result_mime'        => $row['result_mime'],
+                'source_bytes'       => $row['source_bytes'] !== null ? (int) $row['source_bytes'] : null,
+                'result_bytes'       => $row['result_bytes'] !== null ? (int) $row['result_bytes'] : null,
+                'structure_ok'       => (bool) $row['structure_ok'],
+                'structure_notes'    => $row['structure_notes'],
+                'rows_expected'      => $row['rows_expected'] !== null ? (int) $row['rows_expected'] : null,
+                'rows_found'         => $row['rows_found'] !== null ? (int) $row['rows_found'] : null,
+                'mismatched_cells'   => $row['mismatched_cells'] !== null ? (int) $row['mismatched_cells'] : null,
+                'mismatches'         => $row['mismatches_json'] ?? [],
+                'totals_expected'    => $row['totals_expected'] ?? [],
+                'totals_found'       => $row['totals_found'] ?? [],
+                'data_verified'      => $row['data_verified'],
+                'verification_notes' => $row['verification_notes'],
+                'artifact_keys'      => array_keys($paths),
+                'created_at'         => $row['created_at'] ?? null,
+            ];
+        }, $rows);
+
+        return $this->respond([
+            'ok'      => true,
+            'data'    => $data,
+            'summary' => FileIoTestsModel::summarise($rows),
+        ]);
+    }
+
+    /** Stream one stored artifact (fixture or downloaded export) for a file I/O test. */
+    public function fileIoArtifact($id = null, $testId = null, $key = null)
+    {
+        $row = (new FileIoTestsModel())->find((int) $testId);
+        if (! $row || (string) $row['qa_run_id'] !== (string) $id) {
+            return $this->failNotFound('File I/O test not found for this run.');
+        }
+
+        $paths = is_array($row['artifact_paths_json'] ?? null) ? $row['artifact_paths_json'] : [];
+        $path  = $paths[(string) $key] ?? null;
+        if (! $path || ! is_file($path)) {
+            return $this->failNotFound('Artifact "' . $key . '" is not available on the API host.');
+        }
+
+        // Only serve from inside the reports root — artifact paths come from the worker.
+        $root = Services::reportService()->reportsRoot();
+        $real = realpath($path);
+        if ($real === false || ! str_starts_with($real, $root)) {
+            return $this->failForbidden('Artifact path is outside the reports directory.');
+        }
+
+        $name = basename($real);
+        // The fixture is what we uploaded, so it carries the source mime; every other
+        // key is something the product handed back.
+        $mime = (string) $key === 'fixture'
+            ? (string) ($row['source_mime'] ?? '')
+            : (string) ($row['result_mime'] ?? '');
+        $mime = $mime !== '' ? $mime : 'application/octet-stream';
+
+        return $this->response
+            ->setHeader('Content-Type', $mime)
+            ->setHeader('Content-Disposition', 'attachment; filename="' . $name . '"')
+            ->setBody((string) file_get_contents($real));
     }
 
     /** Pending runs with queued sessions should display as running. */

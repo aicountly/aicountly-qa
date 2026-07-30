@@ -1,0 +1,17 @@
+File import/export verification. Prove that synthetic files round-trip without data loss.
+
+For each import/export surface in scope:
+1. Upload the deterministic synthetic fixture for this product.
+2. Confirm the application reports acceptance, and that the imported rows appear with the expected values.
+3. Export the same data set.
+4. Compare the exported artifact against the fixture: SHA-256, MIME type, structure (headers, column count), row count, key column values, and numeric totals.
+5. Attempt an upload with a deliberately wrong MIME/extension and confirm the application rejects it with a visible message rather than accepting or silently failing.
+
+Report as errors:
+- Any row count difference between fixture and export.
+- Any key-column value that does not survive the round trip.
+- Numeric totals outside the declared tolerance.
+- An export with an unexpected MIME type, a truncated file, or a zero-byte download.
+- A bad-MIME upload that is accepted.
+
+On observer-only production tiers do not upload anything: assert that the upload path is blocked and record that as the result.

@@ -1,0 +1,16 @@
+HRMS payroll and attendance correctness run.
+
+1. Create employees with known joining dates, salary structures and leave balances.
+2. Mark attendance and apply leave for a known period, including a partial day and a holiday overlap.
+3. Run the payroll cycle for that period.
+4. Open payslips, the payroll register and statutory reports.
+
+Verify:
+- Gross pay equals the sum of the configured earning components.
+- Deductions (PF, ESI, TDS, professional tax) are computed on the correct base and match the configured rate.
+- Net pay equals gross minus total deductions on every payslip.
+- The payroll register total equals the sum of the individual payslips.
+- Leave balance after approval equals opening balance minus days taken.
+- Attendance days used by payroll equal the days marked.
+
+Report every mismatch with employee reference, expected value and printed value, plus all console errors, failed API calls and forms that fail to save.

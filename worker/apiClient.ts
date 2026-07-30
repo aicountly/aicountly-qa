@@ -6,7 +6,13 @@
 import axios, { type AxiosInstance } from 'axios'
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import type { DecisionOption, DecisionRow, NextSessionPayload, SessionPostBody } from './types.js'
+import type {
+  DecisionOption,
+  DecisionRow,
+  FileIoTestPayload,
+  NextSessionPayload,
+  SessionPostBody,
+} from './types.js'
 import { config } from './utils/config.js'
 
 let client: AxiosInstance | null = null
@@ -91,13 +97,43 @@ export async function fetchCredentials(targetProfileId: number): Promise<{ passw
   return data.data
 }
 
-export async function uploadEvidence(sessionId: number, filePath: string, kind: string): Promise<void> {
+export async function uploadEvidence(sessionId: number, filePath: string, kind: string): Promise<string | null> {
   const bytes = await readFile(filePath)
   const fd = new FormData()
   fd.append('file', new Blob([bytes]), basename(filePath))
   fd.append('kind', kind)
 
-  await api().post(`/v1/worker/sessions/${sessionId}/evidence`, fd, {
+  const { data } = await api().post(`/v1/worker/sessions/${sessionId}/evidence`, fd, {
+    params: workerParams(),
+    headers: { 'X-Worker-Token': config.workerToken },
+    maxContentLength: 50 * 1024 * 1024,
+    maxBodyLength: 50 * 1024 * 1024,
+  })
+
+  const payload = data?.data ?? data
+  return typeof payload?.path === 'string' ? payload.path : null
+}
+
+/** Persist one file I/O scenario verdict (hash/MIME/structure + data verification). */
+export async function postFileIoResult(sessionId: number, body: FileIoTestPayload): Promise<number | null> {
+  const { data } = await api().post(`/v1/worker/sessions/${sessionId}/file-io`, body, {
+    params: workerParams(),
+  })
+  const id = (data?.data ?? data)?.id
+  return typeof id === 'number' ? id : null
+}
+
+/**
+ * Copy an artifact (fixture or downloaded export) to the API host so the portal
+ * can serve it even when the worker runs on a different machine.
+ */
+export async function uploadFileIoArtifact(testId: number, key: string, filePath: string): Promise<void> {
+  const bytes = await readFile(filePath)
+  const fd = new FormData()
+  fd.append('file', new Blob([bytes]), basename(filePath))
+  fd.append('key', key)
+
+  await api().post(`/v1/worker/file-io/${testId}/artifact`, fd, {
     params: workerParams(),
     headers: { 'X-Worker-Token': config.workerToken },
     maxContentLength: 50 * 1024 * 1024,

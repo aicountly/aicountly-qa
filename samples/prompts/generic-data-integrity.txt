@@ -1,0 +1,15 @@
+Data-correctness run. Enter deterministic synthetic data, then prove the application stored, processed and displayed exactly that data.
+
+For each module in scope:
+1. Create records with known values (amounts, dates, quantities, references).
+2. Re-open each saved record and compare every field against what was entered.
+3. Open the list/grid view and confirm the record appears with the same values.
+4. Open any dependent report or summary and confirm the derived totals match the entered values.
+
+Report as errors:
+- Any field that comes back different from what was entered (rounding, truncation, timezone shift, encoding damage).
+- Totals or balances that do not equal the sum of their components.
+- Records that save but do not appear in the list, or appear twice.
+- Values that change after a page reload.
+
+Every finding must state the expected value, the actual value, and the screen where the mismatch was observed.

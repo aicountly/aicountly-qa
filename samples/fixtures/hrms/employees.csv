@@ -1,0 +1,5 @@
+employee_code,full_name,department,designation,date_of_joining,gross_monthly
+QA-EMP-0001,Farhan Qureshi,Finance,Analyst,2026-01-05,52000.00
+QA-EMP-0002,Gita Sharma,Finance,Senior Analyst,2025-11-17,68000.00
+QA-EMP-0003,Harish Nair,Operations,Executive,2026-02-02,41000.00
+QA-EMP-0004,Ishita Bose,Operations,Manager,2024-08-19,95000.00

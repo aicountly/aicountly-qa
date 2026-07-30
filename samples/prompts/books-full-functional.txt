@@ -1,0 +1,18 @@
+Full functional QA on Smart Books. Enter deterministic data, then prove every derived figure is correct.
+
+Sequence:
+1. Sign in and select the QA company, branch and financial year.
+2. Create account groups, ledgers, units, stock categories, items, voucher series and tax masters with known values.
+3. Post sales (with and without item), purchase (with and without item), payment, receipt, contra, journal, debit note, credit note and stock vouchers using deterministic amounts.
+4. Re-open each saved voucher and confirm every field matches what was entered.
+5. Open ledger reports, sales/purchase/voucher registers, trial balance, profit & loss, balance sheet, cash flow and fund flow.
+
+Verify:
+- Trial balance debit total equals credit total.
+- Per ledger: opening + debit − credit equals the printed closing balance.
+- Register totals equal the sum of the voucher line totals posted in this run.
+- Balance sheet assets equal liabilities plus equity.
+- Cash and bank closing balances reconcile with receipts, payments and contra entries.
+- Stock quantity movement reconciles per item; closing stock value matches the configured valuation.
+
+Report as errors any mismatch with expected versus actual, plus every console error, failed API call, blank screen and unsaved form. Skip theme, keyboard-only and UX polish checks.

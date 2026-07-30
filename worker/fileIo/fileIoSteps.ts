@@ -1,13 +1,18 @@
 /**
- * Declarative File I/O step runners for Books templates (BKS_029).
- * Production environments never upload — assert blocked_by_safe_guard.
+ * Declarative File I/O step runners driven by template steps (e.g. BKS_029).
+ * The manifest-driven engine in fileIoEngine.ts is the richer path; these steps
+ * remain for templates that script the flow explicitly.
+ *
+ * Observer-only environments never upload — assert blocked_by_safe_guard instead.
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type { Page } from 'playwright'
 import { config } from '../utils/config.js'
-import type { GuardContext } from '../utils/safeActionGuard.js'
+import { isObserverOnly } from '../utils/environments.js'
+import { fileActionsAllowed, type GuardContext } from '../utils/safeActionGuard.js'
+import { fixturesRoot } from './manifest.js'
 import type { TemplateStep } from '../types.js'
 
 export type FileIoBag = {
@@ -27,14 +32,13 @@ export type FileIoContext = {
   productName: string
 }
 
-function isProduction(env: GuardContext['environment']): boolean {
-  return env === 'prod_basic' || env === 'prod_full'
-}
-
 export function resolveFixturePath(fixture: string, productName: string): string {
   if (!fixture) throw new Error('fixture path required')
   if (fixture.startsWith('/')) return fixture
+
+  const samples = fixturesRoot()
   const candidates = [
+    ...(samples ? [resolve(samples, fixture), resolve(samples, productName, basename(fixture))] : []),
     resolve(config.fixturesDir, productName, basename(fixture)),
     resolve(config.fixturesDir, fixture),
     resolve(config.fixturesDir, basename(fixture)),
@@ -45,7 +49,7 @@ export function resolveFixturePath(fixture: string, productName: string): string
   for (const c of candidates) {
     if (existsSync(c)) return c
   }
-  throw new Error(`Fixture not found: ${fixture} (searched under ${config.fixturesDir})`)
+  throw new Error(`Fixture not found: ${fixture} (searched samples/fixtures and ${config.fixturesDir})`)
 }
 
 export async function runFileIoStep(step: TemplateStep, idx: number, ctx: FileIoContext): Promise<FileIoBag> {
@@ -69,13 +73,14 @@ export async function runFileIoStep(step: TemplateStep, idx: number, ctx: FileIo
 }
 
 async function fileImport(step: TemplateStep, idx: number, ctx: FileIoContext): Promise<FileIoBag> {
-  if (isProduction(ctx.guard.environment)) {
+  const gate = fileActionsAllowed(ctx.guard)
+  if (!gate.allowed) {
     return {
       index: idx,
       kind: 'file_import',
       ok: false,
-      error: 'blocked_by_safe_guard: file_import refused on production',
-      data: { blocked_by_safe_guard: true },
+      error: `blocked_by_safe_guard: ${gate.reason}`,
+      data: { blocked_by_safe_guard: true, reason: gate.reason },
     }
   }
   const fixture = resolveFixturePath(String(step.fixture || ''), ctx.productName)
@@ -160,12 +165,13 @@ function compareRoundtrip(step: TemplateStep, idx: number, ctx: FileIoContext): 
 }
 
 async function uploadExpectRejected(step: TemplateStep, idx: number, ctx: FileIoContext): Promise<FileIoBag> {
-  if (isProduction(ctx.guard.environment)) {
+  const gate = fileActionsAllowed(ctx.guard)
+  if (!gate.allowed) {
     return {
       index: idx,
       kind: 'file_upload_expect_rejected',
       ok: true,
-      detail: 'skipped on production (upload blocked by policy)',
+      detail: `skipped — ${gate.reason}`,
     }
   }
   const fixture = resolveFixturePath(String(step.fixture || ''), ctx.productName)
@@ -193,15 +199,15 @@ async function uploadExpectRejected(step: TemplateStep, idx: number, ctx: FileIo
 }
 
 async function assertUploadBlocked(step: TemplateStep, idx: number, ctx: FileIoContext): Promise<FileIoBag> {
-  if (!isProduction(ctx.guard.environment)) {
+  if (!isObserverOnly(ctx.guard.environment)) {
     return {
       index: idx,
       kind: 'assert_file_upload_blocked',
       ok: true,
-      detail: 'not a production environment — guard N/A',
+      detail: 'not an observer-only environment — guard N/A',
     }
   }
-  // Never call setInputFiles / upload on prod.
+  // Never call setInputFiles / upload on an observer-only tier.
   const selectors = selectorList(step)
   const present = []
   for (const sel of selectors) {

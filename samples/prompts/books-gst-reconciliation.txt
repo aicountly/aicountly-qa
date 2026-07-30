@@ -1,0 +1,15 @@
+GST reconciliation on Smart Books. Focus only on tax correctness.
+
+1. Post sales and purchase vouchers at known taxable values across at least two GST rates, including one interstate transaction.
+2. Open GSTR-1, GSTR-3B and the HSN summary for the same period.
+
+Verify:
+- Output CGST + SGST equals taxable sales × applicable rate for intrastate lines.
+- Output IGST equals taxable sales × applicable rate for interstate lines.
+- Input CGST + SGST + IGST equals taxable purchases × applicable rate.
+- GSTR-1 outward taxable value equals the sum of sales voucher taxable amounts for the period.
+- GSTR-3B liability equals GSTR-1 output tax for the same period.
+- HSN summary quantity and taxable value reconcile with the item lines posted.
+- Rounding follows one consistent rule; report any figure that differs by more than the declared tolerance.
+
+Report every tax mismatch with the period, the voucher references involved, the expected figure and the printed figure. Skip permission, keyboard and UX sessions.

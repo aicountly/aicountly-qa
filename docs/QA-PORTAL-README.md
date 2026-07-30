@@ -38,14 +38,20 @@ See [QA-WORKER.md](./QA-WORKER.md) for deploy path, PM2, and one-time AlmaLinux 
 
 The repo never references any internal observation tool by name.
 
-## Environment modes
+## Environment tiers
 
-| Mode             | Data creation             | Behaviour                                                                                  |
-|------------------|---------------------------|--------------------------------------------------------------------------------------------|
-| `sandbox`        | Allowed                   | Full dummy data, full reporting                                                            |
-| `gh`             | Allowed                   | Same as sandbox; for staging stacks                                                        |
-| `prod_basic`     | Refused on writes         | Login + nav + report-page-load only; ProductionGuardFilter blocks data_creation POSTs       |
-| `prod_full`      | Locked by default         | All writes blocked at API filter, worker safeActionGuard, and UI banner unless Owner unlock |
+| Value                    | Production | Observer only | Data creation | File actions |
+|--------------------------|------------|---------------|---------------|--------------|
+| `sandbox`                | no         | no            | allowed       | allowed      |
+| `gh_staging`             | no         | no            | allowed       | allowed      |
+| `production_readonly`    | yes        | **yes**       | refused       | refused      |
+| `production_restricted`  | yes        | **yes**       | refused       | refused      |
+| `production_full_access` | yes        | no            | allowed       | allowed      |
+
+Legacy values (`gh`, `prod_basic`, `prod_full`) are translated automatically and
+rewritten in place by migration `2026-07-30-000025`. Full rules, including why
+you must never write `str_starts_with($env, 'production')`:
+[QA-ENVIRONMENTS.md](./QA-ENVIRONMENTS.md).
 
 ## Roles (independent JWT auth)
 
@@ -138,7 +144,7 @@ The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` sessio
 | `npm run qa:books`  | Loop, but only claim books-product sessions                                                                              |
 | `npm run qa:reports -- --run-dir=qa-reports/books/2026-06-19/QA-RUN-20260619-0001` | Rebuild consolidated HTML/JSON from existing session reports |
 | `npm run qa:validate`    | Re-run validation engines over existing session JSON (stub in v1)                                                   |
-| `npm run qa:cleanup`     | Cleanup data tagged with a qa_run_id via the target UI; refuses to run on `prod_basic` / `prod_full`               |
+| `npm run qa:cleanup`     | Cleanup data tagged with a qa_run_id via the target UI; refuses to run on any production tier                      |
 
 ## QA run lifecycle
 
@@ -155,6 +161,40 @@ The worker polls every `QA_POLL_INTERVAL_MS` ms, claims the next `queued` sessio
 10. Reports are surfaced in /qa-reports and /qa-runs/:id in the UI.
 ```
 
+## New QA Run intake
+
+The form is Title + Target App Profile + Environment (synced from the profile,
+overridable to a *stricter* tier) + Master Prompt with a sample selector. There
+is no "generation mode" — `prompt_kind` defaults to `template`.
+
+```
+GET  /api/v1/master-prompts-samples?product_name=books
+     -> {ok,data:{recommended:[{id,label,description,product,prompt}],other:[…]}}
+
+POST /api/v1/master-prompts
+     body {target_profile_id, environment, title, prompt_text}
+     -> {ok,data:{qa_run_id, prompt_id, plan_id, session_plan}}
+```
+
+Samples are files, not code: `samples/prompts/manifest.json` plus one `.txt` per
+sample. Every QA sample is error-detection or data-correctness focused. Feature
+gap, UX, and competitor prompts belong on the smoke portal.
+
+The submitted environment must not be *less* restrictive than the profile's own
+tier — a sandbox profile may be run as `production_readonly`, but an
+observer-only profile can never be run as sandbox.
+
+## Deleting and cancelling
+
+| Action | Route | Role | Behaviour |
+| --- | --- | --- | --- |
+| Cancel a run | `POST /api/v1/runs/{qaRunId}/cancel` | Owner, QA Manager | Cancels queued/active sessions and pending decisions, writes Error Register entries so nothing disappears silently |
+| Delete a run | `DELETE /api/v1/runs/{qaRunId}` | Owner | Removes the on-disk run folder, then cascades sessions, results, validations, decisions, and file I/O tests |
+| Delete a session | `DELETE /api/v1/sessions/{id}` | Owner | Removes its results, validations, events, decisions, file I/O tests, report rows, and its evidence folder. Refused while claimed / running / awaiting_decision |
+| Delete an error | `DELETE /api/v1/error-register/{id}` | Owner | Hard delete |
+| Clear errors | `DELETE /api/v1/error-register/clear` | Owner | Scoped by `qa_run_id`, `product_name`, `module`, or `status`; at least one scope is required |
+| Delete a profile | `DELETE /api/v1/target-profiles/{id}` | Owner | **Cascade**: cleans each related run's files first, then deletes runs, credentials, and the profile. Refused while any of its sessions is still executing |
+
 ## Reports — folder layout
 
 ```
@@ -164,16 +204,46 @@ qa-reports/
       QA-RUN-20260619-0001/
         session-001-login-and-company-context/
           screenshots/   001-after-login.png …
+          file-io/       bank-statement-round-trip/{fixture,downloaded}
           trace.zip
           report.html
           report.json
+          report.cursor-prompts.md
         session-002-ledger-masters/
           …
         consolidated.html
         consolidated.json
+        consolidated.cursor-prompts.md
 ```
 
 Both worker and API write under the same root (`QA_REPORTS_DIR`). The folder is gitignored.
+
+### What a report contains
+
+Session reports carry run/session meta, environment tier, status + severity,
+failed steps, every validation with expected vs actual, `decisions_taken`,
+`file_io_tests` (including row counts, changed cells, and numeric totals),
+screenshots embedded as data URIs so the HTML stays portable when downloaded,
+a plain-English `human_summary`, and a developer prompt pack.
+
+The consolidated report adds totals, top errors grouped by rule, the file I/O
+pass rate and data-verification roll-up, all decisions taken, and links to each
+session report.
+
+### Developer prompt packs
+
+Every session writes `report.cursor-prompts.md`, and every run writes
+`consolidated.cursor-prompts.md`. These are **error-fix** prompts — reproduce
+steps, expected vs actual, evidence, done-when — never feature or UX
+suggestions (that is the smoke portal's job).
+
+```
+GET /api/v1/reports/session/{sessionId}/prompts
+GET /api/v1/reports/{qaRunId}/prompts
+```
+
+Both default to JSON `{ok:true,data:{…,markdown}}`. Add `?format=md` (or send
+`Accept: text/markdown`) for the raw markdown body.
 
 ## Adding a new product / session template
 
@@ -225,7 +295,7 @@ Other Books templates ship as JSON only; running them requires no additional cod
 
 ## Security guardrails
 
-- **API layer**: `ProductionGuardFilter` blocks data_creation writes on `prod_basic` / `prod_full` unless Owner unlock is active. `RoleFilter` enforces Owner / QA Manager / Viewer access. `JwtFilter` validates every authenticated route.
+- **API layer**: `ProductionGuardFilter` blocks data_creation writes on any production tier unless Owner unlock is active, and blocks observer-only tiers (`production_readonly`, `production_restricted`) even when the unlock is on. `RoleFilter` enforces Owner / QA Manager / Viewer access. `JwtFilter` validates every authenticated route.
 - **Worker layer**: `safeActionGuard` refuses to click any button whose text matches `Delete | Remove | Reset | Finalize | File Return | Generate E-Invoice | Generate E-Way Bill | Submit to GST | Sync Live | Approve | Reject | Post Permanently` on production targets. Throws `SafeActionBlocked`; the session is marked `blocked_by_safe_guard`.
 - **Frontend layer**: `ProductionBanner` is shown across the SPA when the active target is production. Forms disable destructive actions client-side.
 - **Audit log**: every login, profile change, credential rotation, plan generation, session approval, session execution, credential fetch, screenshot capture, settings change is appended to `qa_audit_logs`. Append-only — never updated.

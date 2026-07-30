@@ -7,7 +7,8 @@ import { fmtDate } from '../lib/format.js'
 import FilterBar from '../components/FilterBar.jsx'
 import { PRODUCT_FILTER_OPTIONS } from '../lib/products.js'
 import { useAuth } from '../lib/auth.jsx'
-const envs = ['sandbox', 'gh', 'prod_basic', 'prod_full']
+import { ENVIRONMENT_FILTER_OPTIONS } from '../lib/environments.js'
+
 const statuses = ['pending', 'running', 'completed', 'failed', 'cancelled']
 
 export default function QaRuns() {
@@ -46,7 +47,7 @@ export default function QaRuns() {
         onChange={setFilters}
         fields={[
           { key: 'product',     label: 'Product',     options: PRODUCT_FILTER_OPTIONS },
-          { key: 'environment', label: 'Environment', options: envs.map((e) => ({ value: e, label: e })) },
+          { key: 'environment', label: 'Environment', options: ENVIRONMENT_FILTER_OPTIONS },
           { key: 'status',      label: 'Status',      options: statuses.map((s) => ({ value: s, label: s })) },
           { key: 'from',        label: 'From',        type: 'date' },
           { key: 'to',          label: 'To',          type: 'date' },

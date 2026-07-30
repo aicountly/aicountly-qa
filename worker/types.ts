@@ -3,6 +3,10 @@
  * Mirrors the JSON shape returned by /api/v1/worker/next-session.
  */
 
+import type { Environment } from './utils/environments.js'
+
+export type { Environment }
+
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'warning'
 export type SessionStatus =
   | 'queued' | 'claimed' | 'running' | 'awaiting_decision'
@@ -12,7 +16,8 @@ export interface TargetProfile {
   id: number
   profile_name: string
   product_name: string
-  environment: 'sandbox' | 'gh' | 'prod_basic' | 'prod_full'
+  /** Canonical five-tier value; legacy values are normalized on arrival. */
+  environment: Environment | string
   base_url: string
   login_url: string
   username: string
@@ -20,6 +25,12 @@ export interface TargetProfile {
   allowed_modules?: string[] | null
   data_creation_allowed: boolean
   production_restriction: boolean
+  observer_mode?: boolean
+  read_only?: boolean
+  allow_safe_demo?: boolean
+  login_strategy?: string
+  jump_to?: string | null
+  extra_config?: Record<string, unknown> | null
   status: string
 }
 
@@ -28,6 +39,7 @@ export interface Run {
   target_profile_id: number
   product_name: string
   environment: TargetProfile['environment']
+  title?: string | null
   status: string
 }
 
@@ -142,6 +154,37 @@ export interface SessionPostBody {
   validations: ValidationResult[]
   started_at: string
   completed_at: string
+}
+
+export type FileIoCompareStatus =
+  | 'pass' | 'fail' | 'partial' | 'skipped' | 'blocked' | 'not_applicable'
+
+/** Body posted to POST /v1/worker/sessions/{id}/file-io. */
+export interface FileIoTestPayload {
+  scenario_key: string
+  direction: 'upload' | 'download' | 'round_trip'
+  fixture_name?: string
+  upload_ok: boolean
+  download_ok: boolean
+  compare_status: FileIoCompareStatus
+  source_sha256?: string
+  result_sha256?: string
+  source_mime?: string
+  result_mime?: string
+  source_bytes?: number
+  result_bytes?: number
+  structure_ok: boolean
+  structure_notes?: string
+  rows_expected?: number
+  rows_found?: number
+  mismatched_cells?: number
+  mismatches?: Array<{ key: string; column: string; expected: string; actual: string }>
+  totals_expected?: Record<string, number>
+  totals_found?: Record<string, number>
+  data_verified?: boolean | null
+  verification_notes?: string
+  artifact_paths: Record<string, string>
+  evidence: Record<string, unknown>
 }
 
 export interface DecisionOption {

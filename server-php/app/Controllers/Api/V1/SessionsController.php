@@ -2,16 +2,16 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Models\AuditLogsModel;
 use App\Models\RunsModel;
 use App\Models\SessionEventsModel;
 use App\Models\SessionResultsModel;
 use App\Models\SessionsModel;
 use App\Models\ValidationResultsModel;
-use CodeIgniter\RESTful\ResourceController;
 use Config\Services;
 
-class SessionsController extends ResourceController
+class SessionsController extends BaseResourceApiController
 {
     protected $modelName = SessionsModel::class;
     protected $format    = 'json';
@@ -89,6 +89,97 @@ class SessionsController extends ResourceController
             'ok'   => true,
             'data' => $session,
         ]);
+    }
+
+    /**
+     * Hard-delete one session: DB rows plus its on-disk evidence folder.
+     * Refused while the worker still holds a lease on it.
+     */
+    public function delete($id = null)
+    {
+        if (! $this->roleAllowed(['Owner'])) {
+            return $this->failForbidden('Only an Owner can delete a QA session.');
+        }
+
+        $sessionId = (int) $id;
+        $session   = $this->model->find($sessionId);
+        if (! $session) {
+            return $this->failNotFound();
+        }
+
+        $status = (string) ($session['status'] ?? '');
+        if (in_array($status, SessionsModel::LEASED, true)) {
+            return $this->fail(
+                'Cannot delete a session while it is ' . $status
+                . '. Cancel the QA run (or wait for the lease to expire) first.',
+                409
+            );
+        }
+
+        $run = (new RunsModel())->find($session['qa_run_id']);
+        $dir = dirname(Services::reportService()->sessionScreenshotsDirectory($session, $run ?: null));
+        $removedDir = $this->removeTree($dir);
+
+        $db = $this->model->db;
+        $db->transStart();
+        foreach ([
+            'qa_validation_results',
+            'qa_session_results',
+            'qa_session_events',
+            'qa_run_decisions',
+            'qa_file_io_tests',
+            'qa_reports',
+        ] as $table) {
+            try {
+                $db->table($table)->where('session_id', $sessionId)->delete();
+            } catch (\Throwable $e) {
+                // Optional tables on older deploys — the FK cascade covers the rest.
+            }
+        }
+        $this->model->delete($sessionId);
+        $db->transComplete();
+
+        if (! $db->transStatus()) {
+            return $this->fail('Failed to delete the QA session.', 500);
+        }
+
+        Services::auditService()->log('session_delete', [
+            'qa_run_id'    => $session['qa_run_id'],
+            'session_id'   => $sessionId,
+            'subject_kind' => 'session',
+            'subject_id'   => $sessionId,
+            'metadata'     => ['directory_removed' => $removedDir, 'previous_status' => $status],
+        ]);
+
+        return $this->respondDeleted(['ok' => true, 'data' => ['directory_removed' => $removedDir]]);
+    }
+
+    /** Only ever called with a path built from the reports root. */
+    private function removeTree(string $dir): bool
+    {
+        $root = Services::reportService()->reportsRoot();
+        $real = realpath($dir);
+        if ($real === false || ! is_dir($real) || ! str_starts_with($real, $root) || $real === $root) {
+            return false;
+        }
+
+        $items = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($real, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($items as $item) {
+            $item->isDir() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
+        }
+        @rmdir($real);
+
+        return ! is_dir($real);
+    }
+
+    private function roleAllowed(array $roles): bool
+    {
+        $user = $this->request->qaUser ?? null;
+
+        return $user && (bool) array_intersect($roles, (array) ($user['roles'] ?? []));
     }
 
     /**

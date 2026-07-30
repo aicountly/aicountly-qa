@@ -2,13 +2,13 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Models\RunsModel;
 use App\Models\SessionPlansModel;
 use App\Models\SessionsModel;
-use CodeIgniter\RESTful\ResourceController;
 use Config\Services;
 
-class SessionPlansController extends ResourceController
+class SessionPlansController extends BaseResourceApiController
 {
     protected $modelName = SessionPlansModel::class;
     protected $format    = 'json';
@@ -43,7 +43,18 @@ class SessionPlansController extends ResourceController
             return $this->failValidationErrors('qa_run_id, target_profile_id and prompt_text required.');
         }
 
-        $plan = Services::sessionPlanner()->generateDraft($qaRunId, $profileId, $prompt, $kind);
+        $options = [];
+        if (! empty($body['environment'])) {
+            $options['environment'] = (string) $body['environment'];
+        }
+        if (! empty($body['master_prompt_id'])) {
+            $options['master_prompt_id'] = (int) $body['master_prompt_id'];
+        }
+        if (! empty($body['title'])) {
+            $options['title'] = (string) $body['title'];
+        }
+
+        $plan = Services::sessionPlanner()->generateDraft($qaRunId, $profileId, $prompt, $kind, $options);
         return $this->respond(['ok' => true, 'data' => $plan]);
     }
 
@@ -52,6 +63,13 @@ class SessionPlansController extends ResourceController
         $body = $this->request->getJSON(true) ?: [];
         if (! isset($body['plan_json'])) {
             return $this->failValidationErrors('plan_json required.');
+        }
+        $plan = $this->model->find($id);
+        if (! $plan) {
+            return $this->failNotFound();
+        }
+        if ((string) ($plan['status'] ?? '') !== 'draft') {
+            return $this->fail('Only a draft session plan can be edited.', 409);
         }
         $this->model->update($id, ['plan_json' => $body['plan_json']]);
         Services::auditService()->log('session_plan_update', ['subject_kind' => 'session_plan', 'subject_id' => $id]);
@@ -64,6 +82,25 @@ class SessionPlansController extends ResourceController
         if (! $plan) {
             return $this->failNotFound();
         }
+
+        $status = (string) ($plan['status'] ?? '');
+        // Approving twice would materialise the plan's sessions a second time.
+        if ($status === 'approved') {
+            $queued = (new SessionsModel())->where('session_plan_id', (int) $id)->countAllResults();
+
+            return $this->respond([
+                'ok'   => true,
+                'data' => ['queued' => $queued, 'already_approved' => true],
+            ]);
+        }
+        if ($status !== 'draft') {
+            return $this->fail(
+                'Session plan is ' . ($status !== '' ? $status : 'in an unknown state')
+                . ' and can no longer be approved. Generate a new plan instead.',
+                409
+            );
+        }
+
         $u = $this->request->qaUser;
         $this->model->update($id, [
             'status'      => 'approved',
@@ -102,5 +139,63 @@ class SessionPlansController extends ResourceController
         ]);
 
         return $this->respond(['ok' => true, 'data' => ['queued' => count($entries)]]);
+    }
+
+    /**
+     * Reject a draft plan so nothing is ever queued for the worker.
+     *
+     * Draft-only by design: once a plan is approved its sessions exist, and the
+     * way to stop those is `POST /v1/runs/{qaRunId}/cancel`, not a plan reject.
+     * Body: { reason?: string|null } — persisted verbatim for the audit trail.
+     */
+    public function reject($id = null)
+    {
+        $plan = $this->model->find($id);
+        if (! $plan) {
+            return $this->failNotFound();
+        }
+
+        $status = (string) ($plan['status'] ?? '');
+        if ($status === 'rejected') {
+            return $this->respond([
+                'ok'   => true,
+                'data' => ['status' => 'rejected', 'already_rejected' => true],
+            ]);
+        }
+        if ($status !== 'draft') {
+            return $this->fail(
+                'Only a draft session plan can be rejected. This plan is ' . ($status !== '' ? $status : 'in an unknown state')
+                . ' — cancel the QA run instead.',
+                409
+            );
+        }
+
+        $body   = $this->request->getJSON(true) ?: [];
+        $reason = trim((string) ($body['reason'] ?? ''));
+        $user   = $this->request->qaUser;
+        $now    = date('Y-m-d H:i:s');
+
+        $this->model->update($id, [
+            'status'          => 'rejected',
+            'rejected_reason' => $reason !== '' ? $reason : null,
+            'rejected_by'     => $user['id'] ?? null,
+            'rejected_at'     => $now,
+        ]);
+
+        // A rejected plan can never run, so the run it belongs to is finished too.
+        $runs = new RunsModel();
+        $run  = $runs->find($plan['qa_run_id']);
+        if ($run && (string) ($run['status'] ?? '') === 'pending') {
+            $runs->update($plan['qa_run_id'], ['status' => 'cancelled', 'completed_at' => $now]);
+        }
+
+        Services::auditService()->log('session_plan_reject', [
+            'qa_run_id'    => $plan['qa_run_id'],
+            'subject_kind' => 'session_plan',
+            'subject_id'   => $id,
+            'metadata'     => ['reason' => $reason !== '' ? $reason : null],
+        ]);
+
+        return $this->respond(['ok' => true, 'data' => $this->model->find($id)]);
     }
 }

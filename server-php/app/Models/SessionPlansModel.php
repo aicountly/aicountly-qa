@@ -13,6 +13,7 @@ class SessionPlansModel extends Model
     protected $allowedFields = [
         'qa_run_id', 'master_prompt_id', 'plan_json', 'status',
         'approved_by', 'approved_at',
+        'rejected_reason', 'rejected_by', 'rejected_at',
     ];
 
     protected $afterFind = ['decodeJsonFields'];

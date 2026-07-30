@@ -2,10 +2,10 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Models\ValidationRulesModel;
-use CodeIgniter\RESTful\ResourceController;
 
-class ValidationRulesController extends ResourceController
+class ValidationRulesController extends BaseResourceApiController
 {
     protected $modelName = ValidationRulesModel::class;
     protected $format    = 'json';

@@ -2,10 +2,10 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Controllers\BaseResourceApiController;
 use App\Models\RolesModel;
-use CodeIgniter\RESTful\ResourceController;
 
-class RolesController extends ResourceController
+class RolesController extends BaseResourceApiController
 {
     protected $modelName = RolesModel::class;
     protected $format    = 'json';

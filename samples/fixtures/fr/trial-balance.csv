@@ -1,0 +1,7 @@
+account_code,account_name,debit,credit
+QA-TB-1000,Cash and Cash Equivalents,150000.00,0.00
+QA-TB-1100,Trade Receivables,90000.00,0.00
+QA-TB-2000,Trade Payables,0.00,60000.00
+QA-TB-3000,Share Capital,0.00,100000.00
+QA-TB-4000,Revenue from Operations,0.00,220000.00
+QA-TB-5000,Employee Benefits Expense,140000.00,0.00

@@ -7,6 +7,7 @@
  */
 
 import type { Page } from 'playwright'
+import { isObserverOnly, isProduction, normalizeEnvironment, type Environment } from './environments.js'
 
 const DEFAULT_RESTRICTED = [
   'Delete', 'Remove', 'Reset',
@@ -18,10 +19,15 @@ const DEFAULT_RESTRICTED = [
   'Post Permanently',
 ]
 
+export const OBSERVER_ONLY_FILE_BLOCK_REASON =
+  'Observer-only environment: file uploads and mutating downloads are never attempted.'
+
 export interface GuardContext {
-  environment: 'sandbox' | 'gh' | 'prod_basic' | 'prod_full'
+  environment: Environment | string
   productionUnlocked: boolean
   restrictedWords?: string[]
+  /** Profile-level opt-in required before any synthetic file is uploaded. */
+  allowSafeDemo?: boolean
 }
 
 export class SafeActionBlocked extends Error {
@@ -31,14 +37,24 @@ export class SafeActionBlocked extends Error {
   }
 }
 
-function isProductionTarget(env: GuardContext['environment']): boolean {
-  return env === 'prod_basic' || env === 'prod_full'
-}
-
 export function isBlocked(label: string, ctx: GuardContext): { blocked: boolean; match?: string } {
-  if (!isProductionTarget(ctx.environment) || ctx.productionUnlocked) {
+  const env = normalizeEnvironment(ctx.environment)
+
+  // Observer-only tiers refuse destructive labels even with the owner unlock on.
+  if (isObserverOnly(env)) {
+    const words = ctx.restrictedWords?.length ? ctx.restrictedWords : DEFAULT_RESTRICTED
+    for (const w of words) {
+      if (label.toLowerCase().includes(w.toLowerCase())) {
+        return { blocked: true, match: w }
+      }
+    }
     return { blocked: false }
   }
+
+  if (!isProduction(env) || ctx.productionUnlocked) {
+    return { blocked: false }
+  }
+
   const words = ctx.restrictedWords?.length ? ctx.restrictedWords : DEFAULT_RESTRICTED
   for (const w of words) {
     if (label.toLowerCase().includes(w.toLowerCase())) {
@@ -46,6 +62,20 @@ export function isBlocked(label: string, ctx: GuardContext): { blocked: boolean;
     }
   }
   return { blocked: false }
+}
+
+/** Whether this context may move a synthetic file into or out of the target. */
+export function fileActionsAllowed(ctx: GuardContext): { allowed: boolean; reason?: string } {
+  if (isObserverOnly(ctx.environment)) {
+    return { allowed: false, reason: OBSERVER_ONLY_FILE_BLOCK_REASON }
+  }
+  if (ctx.allowSafeDemo === false) {
+    return {
+      allowed: false,
+      reason: 'Target profile has allow_safe_demo turned off, so synthetic uploads are skipped.',
+    }
+  }
+  return { allowed: true }
 }
 
 /**

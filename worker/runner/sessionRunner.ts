@@ -23,8 +23,17 @@ import { runReportChecks } from '../validation/reportValidation.js'
 import { runUiChecks } from '../validation/uiValidation.js'
 import { config } from '../utils/config.js'
 import { interpolate, dateFromRunId } from '../utils/runId.js'
-import { SafeActionBlocked } from '../utils/safeActionGuard.js'
-import type { NextSessionPayload, ValidationResult, SessionPostBody, Severity, TemplateStep } from '../types.js'
+import { SafeActionBlocked, type GuardContext } from '../utils/safeActionGuard.js'
+import { normalizeEnvironment, templateKeys } from '../utils/environments.js'
+import { runFileIoScenarios, shouldRunFileIo } from '../fileIo/fileIoEngine.js'
+import type {
+  FileIoTestPayload,
+  NextSessionPayload,
+  ValidationResult,
+  SessionPostBody,
+  Severity,
+  TemplateStep,
+} from '../types.js'
 
 interface RunOpts {
   basicCheck?: boolean
@@ -66,9 +75,10 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
   consoleCap.attach(page)
   netCap.attach(page)
 
-  const guard = {
-    environment: profile.environment,
+  const guard: GuardContext = {
+    environment: normalizeEnvironment(profile.environment),
     productionUnlocked: false,
+    allowSafeDemo: profile.allow_safe_demo !== false,
   }
 
   const heart = setInterval(() => {
@@ -82,6 +92,8 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
   const tables: Record<string, Array<Record<string, string>>> = {}
   const exportsMap: Record<string, string> = {}
   const stepResults: StepResult[] = []
+  const fileIoTests: FileIoTestPayload[] = []
+  const fileIoValidations: ValidationResult[] = []
   let blockedBySafeGuard = false
   let safeGuardMessage = ''
   let selectedJumpTo: { label: string; value: string } | undefined
@@ -230,6 +242,42 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
         break
       }
     }
+    if (!blockedBySafeGuard && shouldRunFileIo(session)) {
+      await postProgress(session.id, {
+        message: 'Running manifest-driven file I/O scenarios',
+        step: 'file_io',
+      }).catch(() => null)
+
+      const fileIo = await runFileIoScenarios({
+        page,
+        session,
+        run,
+        profile,
+        guard,
+        sessionDir: dir,
+        autoApprove: opts.basicCheck,
+        scope: {
+          urls: [page.url()],
+          titles: [await page.title().catch(() => '')],
+          labels: [
+            session.name,
+            String(session.module ?? ''),
+            String(session.sub_module ?? ''),
+            ...stepResults.map((s) => s.detail ?? ''),
+          ].filter(Boolean),
+        },
+      }).catch((err: Error) => {
+        stepResults.push({ index: stepResults.length, kind: 'file_io', ok: false, error: err.message })
+        return { tests: [], validations: [] }
+      })
+
+      fileIoTests.push(...fileIo.tests)
+      fileIoValidations.push(...fileIo.validations)
+      for (const test of fileIo.tests) {
+        await screenshots.take(page, `file-io-${slug(test.scenario_key)}`).catch(() => null)
+      }
+    }
+
     await screenshots.take(page, 'final-state')
   } catch (err) {
     stepResults.push({ index: 0, kind: 'fatal', ok: false, error: (err as Error)?.message ?? String(err) })
@@ -251,7 +299,7 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
     rules,
   })
 
-  let validations: ValidationResult[] = [...acc, ...rep, ...ui]
+  let validations: ValidationResult[] = [...acc, ...rep, ...ui, ...fileIoValidations]
   if (hostMatchFailed) validations = [hostMatchFailed, ...validations]
   if (blockedBySafeGuard) {
     validations = [
@@ -293,6 +341,8 @@ export async function runOneSession(payload: NextSessionPayload, opts: RunOpts =
       tables_read: Object.keys(tables),
       blocked_by_safe_guard: blockedBySafeGuard,
       selected_jump_to: selectedJumpTo ?? null,
+      file_io_tests: fileIoTests,
+      file_io_summary: summariseFileIo(fileIoTests),
       fatal_error: fatalStep?.error ?? failedSteps[0]?.error ?? null,
       failed_steps: failedSteps.slice(0, 12).map((s) => ({
         kind: s.kind,
@@ -342,9 +392,31 @@ function pickStepsForEnv(
   environment: string,
 ): TemplateStep[] {
   if (!template) return []
-  const byEnv = template.steps_by_env?.[environment]
-  if (Array.isArray(byEnv) && byEnv.length) return byEnv
+  // Templates authored before the five-tier rename still key on 'gh'/'prod_basic'.
+  for (const key of templateKeys(environment)) {
+    const byEnv = template.steps_by_env?.[key]
+    if (Array.isArray(byEnv) && byEnv.length) return byEnv
+  }
   return template.steps || []
+}
+
+function summariseFileIo(tests: FileIoTestPayload[]): Record<string, number | null> {
+  const counted = tests.filter((t) => t.compare_status === 'pass' || t.compare_status === 'fail')
+  const verified = tests.filter((t) => t.data_verified !== null && t.data_verified !== undefined)
+
+  return {
+    total: tests.length,
+    passed: tests.filter((t) => t.compare_status === 'pass').length,
+    failed: tests.filter((t) => t.compare_status === 'fail').length,
+    partial: tests.filter((t) => t.compare_status === 'partial').length,
+    blocked: tests.filter((t) => t.compare_status === 'blocked').length,
+    skipped: tests.filter((t) => t.compare_status === 'skipped').length,
+    data_verified: verified.filter((t) => t.data_verified === true).length,
+    data_mismatched: verified.filter((t) => t.data_verified === false).length,
+    pass_rate: counted.length === 0
+      ? null
+      : Number(((tests.filter((t) => t.compare_status === 'pass').length / counted.length) * 100).toFixed(1)),
+  }
 }
 
 function slug(s: string): string {

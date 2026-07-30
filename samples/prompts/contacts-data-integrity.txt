@@ -1,0 +1,14 @@
+Contacts data-correctness run.
+
+1. Create contacts and organisations with known names, emails, phone numbers, tags and addresses, including one record with accented characters and one with a very long name.
+2. Re-open each record and compare every field against what was entered.
+3. Import the deterministic contacts CSV fixture, then export contacts and compare row count, the email key column, and the header structure.
+4. Search and filter for the created records by name, email and tag.
+5. Merge or link two records if the product supports it, then confirm no field is lost.
+
+Report as errors:
+- Fields that come back trimmed, re-encoded, or empty after save.
+- Duplicate records created by a single save.
+- Imported rows that do not appear, or appear with shifted columns.
+- Search that fails to return a record that demonstrably exists.
+- Any console error, failed API call, or unsaved form.

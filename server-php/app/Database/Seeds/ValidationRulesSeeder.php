@@ -42,8 +42,12 @@ class ValidationRulesSeeder extends Seeder
             ['rule_code' => 'FILE_EXPORT_OK',              'rule_kind' => 'file_io',    'product_name' => 'books', 'title' => 'Books export produces a readable file',                  'severity_on_fail' => 'high',     'description' => 'Export completes and produces a non-empty file with the expected MIME type.', 'expression_json' => json_encode(['kind' => 'file_export_produced'])],
             ['rule_code' => 'FILE_ROUNDTRIP_MATCH',        'rule_kind' => 'file_io',    'product_name' => 'books', 'title' => 'Books import/export round trip matches fixture',         'severity_on_fail' => 'critical', 'description' => 'Canonical exported rows and MIME type match the deterministic imported fixture.', 'expression_json' => json_encode(['kind' => 'file_roundtrip_match'])],
             ['rule_code' => 'FILE_BAD_MIME_REJECTED',      'rule_kind' => 'file_io',    'product_name' => 'books', 'title' => 'Books rejects an invalid upload MIME type',              'severity_on_fail' => 'high',     'description' => 'A non-CSV payload presented as an import is rejected with visible feedback.', 'expression_json' => json_encode(['kind' => 'file_bad_mime_rejected'])],
-            ['rule_code' => 'FILE_PROD_UPLOAD_BLOCKED',    'rule_kind' => 'file_io',    'product_name' => 'books', 'title' => 'Production Books upload remains blocked',                'severity_on_fail' => 'critical', 'description' => 'File import does not upload or mutate data in prod_basic or prod_full.', 'expression_json' => json_encode(['kind' => 'file_prod_upload_blocked'])],
+            ['rule_code' => 'FILE_PROD_UPLOAD_BLOCKED',    'rule_kind' => 'file_io',    'product_name' => 'books', 'title' => 'Production Books upload remains blocked',                'severity_on_fail' => 'critical', 'description' => 'File import never uploads or mutates data on an observer-only production tier.', 'expression_json' => json_encode(['kind' => 'file_prod_upload_blocked'])],
         ];
+
+        foreach (\App\Services\FileIoRuleCatalog::rules() as $rule) {
+            $rules[] = $rule;
+        }
 
         $now = date('Y-m-d H:i:s');
         foreach ($rules as &$r) {

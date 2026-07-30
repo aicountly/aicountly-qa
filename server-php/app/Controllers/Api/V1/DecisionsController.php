@@ -9,6 +9,7 @@ use App\Models\RunDecisionsModel;
 use App\Models\RunsModel;
 use App\Models\SessionEventsModel;
 use App\Models\SessionsModel;
+use Config\Environments;
 use Config\Services;
 
 class DecisionsController extends BaseApiController
@@ -79,7 +80,9 @@ class DecisionsController extends BaseApiController
             $run = (new RunsModel())->find($qaRunId);
             (new DecisionMemoryModel())->remember([
                 'product_name'  => (string) ($run['product_name'] ?? ''),
-                'environment'   => (string) ($run['environment'] ?? ''),
+                // Canonical tier only: a run row written before the five-tier
+                // migration would otherwise create a second memory key.
+                'environment'   => Environments::normalize((string) ($run['environment'] ?? '')),
                 'situation_key' => (string) $decision['situation_key'],
             ], $selected, is_array($body['memory_payload'] ?? null) ? $body['memory_payload'] : null, $userId);
         }

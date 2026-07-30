@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "note": "QA master prompt samples. Every sample is ERROR-detection or DATA-correctness focused. Feature-gap, UX and competitor prompts belong on the smoke portal, not here.",
+  "samples": [
+    {
+      "id": "books-full-functional",
+      "label": "Smart Books — Full functional & data correctness",
+      "description": "Enter deterministic masters and vouchers, then reconcile ledgers, registers, trial balance, P&L and balance sheet.",
+      "product": "books",
+      "file": "books-full-functional.txt"
+    },
+    {
+      "id": "books-gst-reconciliation",
+      "label": "Smart Books — GST reconciliation",
+      "description": "Post taxed sales and purchases, then reconcile GSTR-1, GSTR-3B and the HSN summary against the vouchers.",
+      "product": "books",
+      "file": "books-gst-reconciliation.txt"
+    },
+    {
+      "id": "books-file-io",
+      "label": "Smart Books — Bank statement import/export",
+      "description": "Round-trip the deterministic bank statement fixture and verify rows, totals, MIME and bad-MIME rejection.",
+      "product": "books",
+      "file": "books-file-io.txt"
+    },
+    {
+      "id": "contacts-data-integrity",
+      "label": "Contacts — Data integrity & CSV round trip",
+      "description": "Create, re-read, import and export contacts; catch trimmed, re-encoded or duplicated records.",
+      "product": "contacts",
+      "file": "contacts-data-integrity.txt"
+    },
+    {
+      "id": "hrms-payroll-correctness",
+      "label": "HRMS — Payroll & attendance correctness",
+      "description": "Verify gross, deductions, net pay, register totals and leave balances against known inputs.",
+      "product": "hrms",
+      "file": "hrms-payroll-correctness.txt"
+    },
+    {
+      "id": "fr-statement-correctness",
+      "label": "Financial Reporting — Statement correctness",
+      "description": "Import a trial balance and reconcile the balance sheet, P&L, cash flow and notes.",
+      "product": "fr",
+      "file": "fr-statement-correctness.txt"
+    },
+    {
+      "id": "calendar-scheduling-correctness",
+      "label": "Calendar — Scheduling & ICS correctness",
+      "description": "Check timezone handling, recurrence expansion and ICS import/export fidelity.",
+      "product": "calendar",
+      "file": "calendar-scheduling-correctness.txt"
+    },
+    {
+      "id": "docs-file-fidelity",
+      "label": "Docs — Upload/download fidelity",
+      "description": "Hash-compare uploaded and downloaded documents, check metadata and reject mismatched types.",
+      "product": "docs",
+      "file": "docs-vault-file-fidelity.txt"
+    },
+    {
+      "id": "vault-file-fidelity",
+      "label": "Vault — Secure attachment fidelity",
+      "description": "Hash-compare stored attachments, verify metadata and confirm access checks hold.",
+      "product": "vault",
+      "file": "docs-vault-file-fidelity.txt"
+    },
+    {
+      "id": "secretarial-register-correctness",
+      "label": "Secretarial — Statutory register correctness",
+      "description": "Reconcile shareholding, allotments and register exports against the entered records.",
+      "product": "secretarial",
+      "file": "secretarial-register-correctness.txt"
+    },
+    {
+      "id": "auditor-workpaper-correctness",
+      "label": "Auditor — Working paper & sampling correctness",
+      "description": "Verify materiality recalculation, sample selection, sign-off state and attachment fidelity.",
+      "product": "auditor",
+      "file": "auditor-workpaper-correctness.txt"
+    },
+    {
+      "id": "generic-login-only",
+      "label": "Login only",
+      "description": "Sign-in smoke gate: credentials, Jump To, product host match, OTP walls. No data entry.",
+      "file": "generic-login-only.txt"
+    },
+    {
+      "id": "generic-error-pack",
+      "label": "Error pack — console, API and broken screens",
+      "description": "Sweep every module for console errors, failed requests, blank screens and dead navigation.",
+      "file": "generic-error-pack.txt"
+    },
+    {
+      "id": "generic-data-integrity",
+      "label": "Data integrity — entered vs stored vs displayed",
+      "description": "Enter known values and prove they survive save, reload, list view and derived totals.",
+      "file": "generic-data-integrity.txt"
+    },
+    {
+      "id": "generic-file-io",
+      "label": "File import/export verification",
+      "description": "Round-trip synthetic fixtures and compare hash, MIME, structure, rows and numeric totals.",
+      "file": "generic-file-io.txt"
+    },
+    {
+      "id": "generic-reports-verification",
+      "label": "Reports data verification",
+      "description": "Reconcile report totals with their rows, check filters actually filter, compare export to screen.",
+      "file": "generic-reports-verification.txt"
+    },
+    {
+      "id": "generic-negative-paths",
+      "label": "Negative & validation paths",
+      "description": "Push invalid input at every form and confirm it is refused cleanly, with a named field message.",
+      "file": "generic-negative-paths.txt"
+    }
+  ]
+}

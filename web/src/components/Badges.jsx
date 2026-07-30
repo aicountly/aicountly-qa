@@ -1,4 +1,10 @@
 import { classNames } from '../lib/format.js'
+import {
+  canonicalizeEnvironment,
+  environmentLabel,
+  environmentShortLabel,
+  isObserverOnlyEnvironment,
+} from '../lib/environments.js'
 
 const statusStyles = {
   queued:                'bg-neutral-100 text-neutral-700',
@@ -52,16 +58,24 @@ export function SeverityBadge({ severity }) {
 }
 
 const envStyles = {
-  sandbox:    'bg-aicountly-50 text-aicountly-700 border border-aicountly-200',
-  gh:         'bg-blue-50 text-blue-700 border border-blue-200',
-  prod_basic: 'bg-red-50 text-red-700 border border-red-200',
-  prod_full:  'bg-red-100 text-red-800 border border-red-300',
+  sandbox:                'bg-aicountly-50 text-aicountly-700 border border-aicountly-200',
+  gh_staging:             'bg-blue-50 text-blue-700 border border-blue-200',
+  production_readonly:    'bg-red-50 text-red-700 border border-red-200',
+  production_restricted:  'bg-red-50 text-red-800 border border-red-200',
+  production_full_access: 'bg-red-100 text-red-900 border border-red-300',
 }
 
-export function EnvBadge({ environment }) {
+export function EnvBadge({ environment, short = false }) {
+  const canonical = canonicalizeEnvironment(environment)
+  const label = short ? environmentShortLabel(environment) : environmentLabel(environment)
+  const observer = isObserverOnlyEnvironment(environment)
+
   return (
-    <span className={classNames('qa-badge', envStyles[environment] || 'bg-neutral-100 text-neutral-700')}>
-      {environment || '—'}
+    <span
+      className={classNames('qa-badge', envStyles[canonical] || 'bg-neutral-100 text-neutral-700')}
+      title={observer ? 'Observer-only target: the worker never creates or changes data here' : undefined}
+    >
+      {label}
     </span>
   )
 }

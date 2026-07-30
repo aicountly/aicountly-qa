@@ -1,0 +1,6 @@
+external_id,first_name,last_name,email,phone,company,city
+QA-CON-0001,Asha,Iyer,asha.iyer@qa.invalid,+91-9000000001,QA Fixture Traders,Chennai
+QA-CON-0002,Bhavesh,Patel,bhavesh.patel@qa.invalid,+91-9000000002,QA Fixture Traders,Ahmedabad
+QA-CON-0003,Chandni,Rao,chandni.rao@qa.invalid,+91-9000000003,QA Sample Services,Hyderabad
+QA-CON-0004,Dev,Menon,dev.menon@qa.invalid,+91-9000000004,QA Sample Services,Kochi
+QA-CON-0005,Esha,Kulkarni,esha.kulkarni@qa.invalid,+91-9000000005,QA Demo Industries,Pune

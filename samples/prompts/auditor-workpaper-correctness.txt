@@ -1,0 +1,15 @@
+Auditor working-paper correctness run.
+
+1. Create an engagement with a known period and materiality figure.
+2. Import or attach the deterministic working-paper fixture and link it to a procedure.
+3. Complete a sampling procedure with known population and sample sizes.
+4. Record findings, sign off a procedure, then reopen it.
+
+Verify:
+- Materiality and performance materiality recalculate correctly when the benchmark changes.
+- Sample selection returns the requested sample size from the stated population; report any off-by-one or duplicate selection.
+- Sign-off records the correct user and timestamp, and reopening clears the sign-off rather than stacking a second one.
+- The attached working paper downloads byte-identical to what was uploaded.
+- Findings roll up into the engagement summary with the same count and severity as entered.
+
+Report every mismatch with expected versus actual, plus all console errors, failed API calls and procedures that fail to save.

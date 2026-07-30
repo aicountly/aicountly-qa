@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, v1 } from '../lib/api.js'
 import { SeverityBadge, StatusBadge } from '../components/Badges.jsx'
@@ -7,6 +7,7 @@ import { fmtDate } from '../lib/format.js'
 import FilterBar from '../components/FilterBar.jsx'
 import { PRODUCT_FILTER_OPTIONS } from '../lib/products.js'
 import { useAuth } from '../lib/auth.jsx'
+import { narrowToRun } from '../lib/errorRegister.js'
 
 const severities = ['critical', 'high', 'medium', 'low', 'warning']
 const statuses = ['open', 'investigating', 'closed']
@@ -94,20 +95,43 @@ export default function ErrorRegister() {
   const qc = useQueryClient()
   const { hasRole } = useAuth()
   const canUpdate = hasRole(['Owner', 'QA Manager'])
-  const [filters, setFilters] = useState({ status: 'open' })
+  const canDelete = hasRole(['Owner'])
+  const [searchParams] = useSearchParams()
+  const [filters, setFilters] = useState(() => {
+    const qaRunId = searchParams.get('qa_run_id')
+    return qaRunId ? { qa_run_id: qaRunId } : { status: 'open' }
+  })
   const params = new URLSearchParams(
     Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== '')),
   ).toString()
 
   const { data, isLoading } = useQuery({
     queryKey: ['errors', params],
-    queryFn: async () => (await api.get(v1(`/error-register?${params}`))).data?.data ?? [],
+    queryFn: async () => {
+      const rows = (await api.get(v1(`/error-register?${params}`))).data?.data ?? []
+      return narrowToRun(rows, filters.qa_run_id)
+    },
   })
 
   const setStatus = useMutation({
     mutationFn: async ({ id, status }) => api.patch(v1(`/error-register/${id}`), { status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['errors'] }),
   })
+
+  const remove = useMutation({
+    mutationFn: async (id) => api.delete(v1(`/error-register/${id}`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['errors'] })
+      qc.invalidateQueries({ queryKey: ['run-errors'] })
+    },
+  })
+
+  function handleDelete(row) {
+    if (!window.confirm(
+      `Delete this error entry?\n\n${row.title || ''}\n\nIt is removed from the register along with its count history. New runs hitting the same failure will create a fresh entry.`,
+    )) return
+    remove.mutate(row.id)
+  }
 
   return (
     <div className="space-y-4">
@@ -133,8 +157,17 @@ export default function ErrorRegister() {
           { key: 'severity', label: 'Severity', options: severities.map((s) => ({ value: s, label: s })) },
           { key: 'product', label: 'Product', options: PRODUCT_FILTER_OPTIONS },
           { key: 'status', label: 'Status', options: statuses.map((s) => ({ value: s, label: s })) },
+          { key: 'qa_run_id', label: 'QA Run ID', placeholder: 'QA-RUN-…' },
         ]}
       />
+
+      {remove.isError && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+          {remove.error?.response?.status === 404 || remove.error?.response?.status === 501
+            ? 'Deleting error entries is not available on this API version yet.'
+            : remove.error?.response?.data?.error || remove.error?.message || 'Delete failed.'}
+        </div>
+      )}
 
       <div className="qa-card overflow-x-auto p-0">
         <table className="qa-table">
@@ -222,6 +255,16 @@ export default function ErrorRegister() {
                         Session
                       </Link>
                     ) : null}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        className="font-medium text-red-600 hover:underline disabled:opacity-50"
+                        disabled={remove.isPending}
+                        onClick={() => handleDelete(e)}
+                      >
+                        {remove.isPending && remove.variables === e.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               )

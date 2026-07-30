@@ -1,0 +1,17 @@
+Bank statement import/export correctness on Smart Books.
+
+1. Open Banking → Bank Statement Import.
+2. After operator approval, import the deterministic QA bank-statement CSV fixture.
+3. Confirm the import reports acceptance and that every statement line appears with the same date, description, reference, debit and credit as the fixture.
+4. Export the imported statement.
+5. Compare the export against the fixture: MIME type, header row, column count, row count, the reference key column, and the debit/credit totals.
+6. Re-submit the same fixture renamed with an image extension and confirm the import is rejected with a visible message.
+
+Report as errors:
+- Any statement line missing, duplicated, or altered after import.
+- Debit or credit totals that differ from the fixture beyond the declared tolerance.
+- An export with the wrong MIME type, missing headers, or a different row count.
+- An invalid-MIME upload that is accepted.
+- Any 4xx/5xx during upload or download, and any upload that appears to succeed but stores nothing.
+
+On observer-only production tiers do not upload: assert the upload control is blocked and record that verdict.

@@ -85,7 +85,7 @@ async function main(): Promise<void> {
       return
     }
     case 'cleanup': {
-      console.log(`[${WORKER_PACKAGE_NAME}] cleanup refuses prod_basic/prod_full; sandbox cleanup is report-driven.`)
+      console.log(`[${WORKER_PACKAGE_NAME}] cleanup refuses any production tier; sandbox cleanup is report-driven.`)
       return
     }
     case 'run-session': {

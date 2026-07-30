@@ -1,0 +1,15 @@
+Login only. Do not run any other module until sign-in succeeds.
+
+Verify:
+- The login form accepts the configured identity and password without a console or network error.
+- The two-step flow completes: identity, "Jump To" product selection, then password.
+- After sign-in the browser lands on the target product host declared on the profile, not on a shared launcher or a different product.
+- Any OTP, MFA, or challenge wall is reported as a blocker with a screenshot rather than guessed at.
+
+Report as errors:
+- Any 4xx/5xx response during the login exchange.
+- Any uncaught JavaScript exception on the login or landing page.
+- A landing URL whose host does not match the profile base URL or an allowed domain.
+- A blank or partially rendered landing page.
+
+Do not enter any data. Do not upload any file.

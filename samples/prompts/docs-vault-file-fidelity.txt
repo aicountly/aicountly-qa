@@ -1,0 +1,17 @@
+Document and Vault file-fidelity run.
+
+1. Upload the deterministic synthetic documents for this product (text, CSV and PDF fixtures).
+2. Confirm each upload reports success and the file appears in the list with the correct name, size and type.
+3. Download every uploaded file.
+4. Compare each download against the source: SHA-256, MIME type, byte size, and — for text and CSV — the exact content.
+5. Attempt an upload with a mismatched extension and confirm it is rejected with a visible message.
+6. Rename, move and delete a document, then confirm the list and any linked record reflect the change.
+
+Report as errors:
+- Any downloaded file whose hash differs from the uploaded file.
+- A file that downloads with the wrong MIME type or zero bytes.
+- Metadata (name, size, owner, timestamp) that does not match what was uploaded.
+- Permission checks that let a file be reached without access.
+- A rejected upload that leaves a partial record behind.
+
+On observer-only production tiers do not upload: assert the upload path is blocked and record that verdict.

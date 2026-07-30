@@ -1,0 +1,16 @@
+Financial Reporting correctness run.
+
+1. Import the deterministic trial balance fixture.
+2. Map every account to its Schedule III / IND-AS grouping.
+3. Generate the balance sheet, statement of profit and loss, cash flow statement and the supporting notes.
+
+Verify:
+- The imported trial balance total debit equals total credit and equals the fixture totals.
+- Every account in the fixture is mapped; report any unmapped or silently dropped account.
+- Balance sheet total assets equal total equity and liabilities.
+- Profit for the period on the P&L equals the figure carried into the balance sheet and the cash flow opening.
+- Each note total equals the face-of-statement line it supports.
+- Prior-period comparatives are carried through unchanged.
+- The exported statement figures equal the on-screen figures.
+
+Report every mismatch with the account or line item, the expected figure and the printed figure. Rounding differences beyond the declared tolerance are defects, not noise.
