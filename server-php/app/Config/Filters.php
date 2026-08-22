@@ -43,7 +43,11 @@ class Filters extends BaseFilters
         'after' => [
             'pagecache',
             'performance',
-            'toolbar',
+
+            // Debug Toolbar intentionally disabled for QA API.
+            // Keeping this enabled generated writable/debugbar files for
+            // every request and caused excessive disk consumption.
+            // 'toolbar',
         ],
     ];
 
