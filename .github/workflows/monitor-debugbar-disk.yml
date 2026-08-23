@@ -1,0 +1,58 @@
+name: Monitor Debug Toolbar Disk Usage
+
+# Scheduled watchdog for the writable/debugbar disk-growth issue (see
+# app/Config/Filters.php $required['after'] — toolbar filter intentionally
+# disabled). Fails loudly (red run + GitHub email notification to watchers)
+# if the directory grows past THRESHOLD_MB, so a regression is caught
+# before it re-accumulates tens of GB.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+env:
+  PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+  PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+  PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+  PROD_REMOTE_ROOT: ${{ secrets.PROD_REMOTE_ROOT }}
+  SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
+  THRESHOLD_MB: 500
+
+jobs:
+  check-debugbar-size:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY_B64: ${{ secrets.PROD_SSH_PRIVATE_KEY_B64 }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          if [ -n "$SSH_PRIVATE_KEY_B64" ]; then
+            echo "$SSH_PRIVATE_KEY_B64" | tr -d '[:space:]' | base64 --decode | tr -d '\r' > ~/.ssh/deploy_key
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          fi
+
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${PROD_SSH_PORT}" "${PROD_SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Check writable/debugbar size on QA server
+        run: |
+          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
+          DEBUGBAR_PATH="${REMOTE_ROOT}/api/writable/debugbar"
+          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+
+          SIZE_MB=$("${SSH_CMD[@]}" "test -d '${DEBUGBAR_PATH}' && du -sm '${DEBUGBAR_PATH}' 2>/dev/null | cut -f1 || echo 0")
+          SIZE_MB="${SIZE_MB:-0}"
+          echo "writable/debugbar size: ${SIZE_MB} MB (threshold: ${THRESHOLD_MB} MB)"
+          "${SSH_CMD[@]}" "df -h /" || true
+
+          if [ "$SIZE_MB" -ge "$THRESHOLD_MB" ]; then
+            echo "::error::QA writable/debugbar is ${SIZE_MB} MB (>= ${THRESHOLD_MB} MB threshold). The Debug Toolbar after-filter may have been re-enabled, or old traces need a manual purge. See app/Config/Filters.php \$required['after']."
+            exit 1
+          fi
+
+          echo "OK: debugbar disk usage within threshold."
