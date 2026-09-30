@@ -1,0 +1,63 @@
+name: Verify live app (manual)
+
+# Checks the live QA portal WITHOUT deploying anything, with the same checks every deploy runs when
+# it finishes (scripts/ci/post-deploy-checks.sh). The runner may be shown the host's anti-bot page
+# instead of the app; the checks then ask again from the server over SSH, set up here exactly as
+# deploy-prod-cpanel.yml sets it up. The QA portal has one environment. Manual only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which deployment to check
+        type: choice
+        options:
+          - production
+        default: production
+
+permissions:
+  contents: read
+
+env:
+  PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+  PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+  PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+  SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY_B64: ${{ secrets.PROD_SSH_PRIVATE_KEY_B64 }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          if [ -n "$SSH_PRIVATE_KEY_B64" ]; then
+            echo "$SSH_PRIVATE_KEY_B64" | tr -d '[:space:]' | base64 --decode | tr -d '\r' > ~/.ssh/deploy_key
+          else
+            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          fi
+
+          chmod 600 ~/.ssh/deploy_key
+
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>/tmp/ssh-keygen.err; then
+            echo "::error::PROD_SSH_PRIVATE_KEY is invalid or passphrase-protected."
+            cat /tmp/ssh-keygen.err
+            exit 1
+          fi
+
+          ssh-keyscan -p "${PROD_SSH_PORT}" "${PROD_SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Verify the live app
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          export VERIFY_SSH="ssh -i ${HOME}/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS} -o ConnectTimeout=20 ${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          bash scripts/ci/post-deploy-checks.sh "$ENVIRONMENT"

@@ -428,3 +428,13 @@ jobs:
              chmod 600 \"${WORKER_ROOT}/.env\" 2>/dev/null || true && \
              echo 'Permissions fixed' && \
              echo 'Deploy complete: web → public_html, api → public_html/api, worker → ${WORKER_ROOT} (PM2 ${QA_WORKER_PM2_NAME})'"
+
+      # The live portal must answer as the QA API, with the SPA just built. The runner may be shown
+      # the host's anti-bot page instead of the app; the checks then ask again from the server over
+      # SSH.
+      - name: Verify the live app
+        run: |
+          EXPECTED_ENTRY="$(grep -o 'assets/index-[^"]*\.js' web/dist/index.html | head -n 1 || true)"
+          export EXPECTED_ENTRY
+          export VERIFY_SSH="ssh -i ${HOME}/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS} -o ConnectTimeout=20 ${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          bash scripts/ci/post-deploy-checks.sh production
