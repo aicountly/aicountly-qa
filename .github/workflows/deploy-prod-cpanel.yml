@@ -192,6 +192,9 @@ jobs:
             --exclude='writable/uploads/*' \
             --exclude='writable/debugbar/*' \
             --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='build' \
+            --exclude='phpunit.xml.dist' \
             -e "$RSYNC_RSH" \
             server-php/ "$DEST"
 
@@ -213,6 +216,9 @@ jobs:
           "${SSH_CMD[@]}" "grep '^QA_DB_' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || true"
           echo "Console SSO keys (values masked):"
           "${SSH_CMD[@]}" "grep -E '^(CONSOLE_API_URL|CONTROLLER_APP_CODE)=' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || echo 'MISSING — add CONSOLE_API_URL and CONTROLLER_APP_CODE for SSO'"
+          if ! "${SSH_CMD[@]}" "grep -Eq '^CONSOLE_API_TOKEN=.+' \"${REMOTE_ROOT}/api/.env\""; then
+            echo "::warning::CONSOLE_API_TOKEN is not set in api/.env — QA roles are only re-checked with Console at sign-in, so a role removed in Console stays effective until the QA token expires (QA_JWT_TTL_MINUTES). Set it (Console per-product key with capability staff.roles)."
+          fi
           if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php check-env.php"; then
             echo "::error::api/.env on the server is missing or has empty QA_DB_* keys, or PostgreSQL is unreachable."
             echo "Edit ${REMOTE_ROOT}/api/.env on the server (not GitHub Secrets)."

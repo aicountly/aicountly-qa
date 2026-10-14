@@ -4,6 +4,8 @@ namespace App\Controllers\Api\V1;
 
 use App\Controllers\BaseApiController;
 use App\Models\UsersModel;
+use App\Services\ConsoleAccess\ConsoleAccessPolicy;
+use App\Services\ConsoleAccess\ConsoleRoleSyncService;
 use App\Services\ConsoleIdentityService;
 use CodeIgniter\HTTP\ResponseInterface;
 use Config\Services;
@@ -22,20 +24,53 @@ class AuthController extends BaseApiController
         );
     }
 
+    /**
+     * POST /v1/auth/refresh {token} — re-issue a QA token. Before issuing, the
+     * user's access is re-confirmed with Console (user-access pull) when
+     * CONSOLE_API_URL + CONSOLE_API_TOKEN are configured: revoked access ends
+     * every local session; otherwise local roles are replaced with Console's.
+     */
     public function refresh()
     {
-        $body  = $this->input();
-        $token = (string) ($body['token'] ?? '');
-        $payload = Services::jwt()->decode($token);
+        $body    = $this->input();
+        $token   = (string) ($body['token'] ?? '');
+        try {
+            $payload = Services::jwt()->decode($token);
+        } catch (RuntimeException $e) {
+            return $this->fail($e->getMessage(), 503);
+        }
         if (! $payload) {
             return $this->fail('Invalid token.', 401);
         }
-        $new = Services::jwt()->issue(
-            (int) $payload['sub'],
-            (string) ($payload['email'] ?? ''),
-            (array) ($payload['roles'] ?? [])
-        );
-        return $this->ok(['token' => $new]);
+
+        $users = new UsersModel();
+        $row   = $users->find((int) ($payload['sub'] ?? 0));
+        if (! $row || ($row['status'] ?? 'active') !== 'active') {
+            return $this->fail('QA user account is inactive.', 401);
+        }
+        if (ConsoleRoleSyncService::sessionRevoked($row, (int) ($payload['iat'] ?? 0))) {
+            return $this->fail('Your QA session was revoked. Sign in again from Console.', 401);
+        }
+
+        $decision = Services::consoleRoleSync()->checkAccess($row, true);
+        if (! $decision->allowed) {
+            $this->audit('console_access_refresh_denied', [
+                'actor_id'    => (int) $row['id'],
+                'actor_email' => $row['email'],
+                'metadata'    => ['source' => $decision->source, 'revoked' => $decision->revoke],
+            ]);
+
+            return $this->fail($decision->message, $decision->status);
+        }
+
+        $roles = $users->roleCodes((int) $row['id']);
+        if ($roles === []) {
+            return $this->fail(ConsoleAccessPolicy::NOT_ASSIGNED_MESSAGE, 403);
+        }
+
+        $new = Services::jwt()->issue((int) $row['id'], (string) $row['email'], $roles);
+
+        return $this->ok(['token' => $new, 'roles' => $roles]);
     }
 
     public function logout()
@@ -131,11 +166,9 @@ class AuthController extends BaseApiController
             $session = $this->buildSessionFromConsoleIdentity($identity, 'controller_sso_callback');
             if ($session instanceof ResponseInterface) {
                 $message = 'You do not have access to the QA controller app.';
-                if (method_exists($session, 'getJSON')) {
-                    $json = $session->getJSON(true);
-                    if (is_array($json) && ! empty($json['error'])) {
-                        $message = (string) $json['error'];
-                    }
+                $json    = json_decode((string) $session->getBody(), true);
+                if (is_array($json) && ! empty($json['error'])) {
+                    $message = (string) $json['error'];
                 }
 
                 return $this->ssoCallbackHtml($message, 403);
@@ -217,6 +250,11 @@ class AuthController extends BaseApiController
     }
 
     /**
+     * Console decides QA roles. With `app_roles` in the payload the user's
+     * local roles are replaced with exactly those (superadmin => every role);
+     * an empty list is refused. Without `app_roles` (old Console) existing
+     * roles are kept and only a superadmin may be seeded with Owner.
+     *
      * @param array<string,mixed> $identity
      * @return array<string,mixed>|ResponseInterface
      */
@@ -236,8 +274,23 @@ class AuthController extends BaseApiController
             return $this->fail('Console identity did not return a user email.', 502);
         }
 
-        $users = new UsersModel();
-        $user  = $users->findByEmail($email);
+        $sync     = Services::consoleRoleSync();
+        $decision = $sync->decideLogin($identity);
+        $users    = new UsersModel();
+        $user     = $users->findByEmail($email);
+
+        if (! $decision->allowed) {
+            if ($user) {
+                $sync->revokeLocalAccess((int) $user['id']);
+                $this->audit('console_access_denied', [
+                    'actor_id'    => (int) $user['id'],
+                    'actor_email' => $user['email'],
+                    'metadata'    => ['reason' => 'no_app_roles', 'event' => $auditEvent],
+                ]);
+            }
+
+            return $this->fail($decision->message, $decision->status);
+        }
 
         if (! $user) {
             $userId = $users->insert([
@@ -251,16 +304,15 @@ class AuthController extends BaseApiController
                 return $this->fail('Could not provision QA user from Console identity.', 500);
             }
 
-            $this->assignRoleByCode($users, (int) $userId, $global ? 'Owner' : 'Developer Viewer');
             $user = $users->find((int) $userId);
         } elseif (($user['status'] ?? 'active') !== 'active') {
             return $this->fail('QA user account is inactive.', 403);
         }
 
+        $sync->applyLogin((int) $user['id'], $decision);
         $roles = $users->roleCodes((int) $user['id']);
-        if ($roles === [] && $global) {
-            $this->assignRoleByCode($users, (int) $user['id'], 'Owner');
-            $roles = $users->roleCodes((int) $user['id']);
+        if ($roles === []) {
+            return $this->fail(ConsoleAccessPolicy::NOT_ASSIGNED_MESSAGE, 403);
         }
 
         try {
@@ -280,8 +332,12 @@ class AuthController extends BaseApiController
             'actor_email' => $user['email'],
             'actor_role'  => $roles[0] ?? null,
             'metadata'    => [
-                'console_user_id'   => (int) ($consoleUser['id'] ?? 0),
+                'console_user_id'   => $decision->consoleUserId ?? (int) ($consoleUser['id'] ?? 0),
                 'global_superadmin' => $global,
+                'app_superadmin'    => (bool) ($identity['app_superadmin'] ?? false),
+                'roles_source'      => $decision->source,
+                'roles'             => $roles,
+                'authz_version'     => $decision->authzVersion,
             ],
         ]);
 
@@ -411,29 +467,5 @@ HTML;
         }
 
         return null;
-    }
-
-    private function assignRoleByCode(UsersModel $users, int $userId, string $roleCode): void
-    {
-        $db = $users->db;
-        $role = $db->table('qa_roles')->where('code', $roleCode)->get()->getRow();
-        if (! $role) {
-            return;
-        }
-
-        $exists = $db->table('qa_user_roles')
-            ->where('user_id', $userId)
-            ->where('role_id', $role->id)
-            ->countAllResults() > 0;
-
-        if ($exists) {
-            return;
-        }
-
-        $db->table('qa_user_roles')->insert([
-            'user_id'    => $userId,
-            'role_id'    => $role->id,
-            'created_at' => date('Y-m-d H:i:s'),
-        ]);
     }
 }

@@ -40,8 +40,23 @@ code. See [docs/QA-BRAIN.md](docs/QA-BRAIN.md) for the full architecture.
 | Layer    | Technology                                                        |
 |----------|-------------------------------------------------------------------|
 | Frontend | React 19 + Vite + Tailwind (existing green AICOUNTLY palette)    |
-| Backend  | PHP CodeIgniter 4.6 + PostgreSQL (independent JWT auth)          |
+| Backend  | PHP CodeIgniter 4.6 + PostgreSQL (QA JWT; roles from Console)   |
 | Worker   | Node 20+ + Playwright in-repo (`worker/`, PM2 `aicountly-qa-worker`) |
+
+## Access & roles
+
+Sign-in is Console SSO only, and **Console assigns QA roles** (Console → Roles &
+Access, app code `qa`: `owner`, `qa_manager`, `developer_viewer`,
+`auditor_viewer`). QA replaces its local roles with Console's at every sign-in,
+on token refresh and every `QA_CONSOLE_RECHECK_MINUTES` (default 15) of use. A
+user with no QA role in Console is refused ("Access not assigned. Ask a Console
+superadmin to assign you a role."). Production must set `CONSOLE_API_URL` and
+`CONSOLE_API_TOKEN` (per-product key, capability `staff.roles`) in
+`server-php/.env`. Details, token lifetime and revocation lag:
+[docs/QA-PORTAL-README.md#roles-assigned-in-console](docs/QA-PORTAL-README.md#roles-assigned-in-console).
+
+Tests: `cd server-php && composer test:unit` (no DB); the SSO/refresh feature
+suite needs a scratch PostgreSQL database — see `server-php/phpunit.xml.dist`.
 
 ## Repo layout
 
@@ -77,7 +92,8 @@ createdb qa_aicountly
 ```bash
 cd server-php
 cp .env.example .env
-# Set QA_DB_*, QA_JWT_SECRET (>=32 chars), QA_VAULT_KEY (64 hex chars), QA_WORKER_TOKEN
+# Set QA_DB_*, QA_JWT_SECRET (>=32 chars), QA_VAULT_KEY (64 hex chars), QA_WORKER_TOKEN,
+# CONSOLE_API_URL + CONSOLE_API_TOKEN (Console role pull; required in production)
 composer install
 php spark migrate
 php spark db:seed RolesSeeder

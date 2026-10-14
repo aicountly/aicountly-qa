@@ -17,6 +17,7 @@ class UsersModel extends Model
     protected $allowedFields = [
         'email', 'name', 'password_hash', 'status',
         'last_login_at', 'last_login_ip', 'mfa_enabled', 'mfa_secret', 'failed_attempts',
+        'console_user_id', 'roles_synced_at', 'authz_version', 'sessions_revoked_at',
     ];
 
     public function findByEmail(string $email): ?array

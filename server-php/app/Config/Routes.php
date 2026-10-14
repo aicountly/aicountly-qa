@@ -21,6 +21,7 @@ $routes->get('/health', static function () {
     $vaultKey  = (string) env('QA_VAULT_KEY', '');
     $vaultOk   = $vaultKey !== '' && strlen($vaultKey) >= 32;
     $consoleOk = trim((string) env('CONSOLE_API_URL', '')) !== '';
+    $rolePull  = $consoleOk && trim((string) env('CONSOLE_API_TOKEN', '')) !== '';
 
     return service('response')->setJSON([
         'ok'        => $jwtOk && $consoleOk,
@@ -35,6 +36,9 @@ $routes->get('/health', static function () {
             'jwt_secret'      => $jwtOk ? 'ok' : 'missing or too short (need 32+ chars in api/.env)',
             'vault_key'       => $vaultOk ? 'ok' : 'missing or too short',
             'console_api_url' => $consoleOk ? 'ok' : 'missing CONSOLE_API_URL in api/.env',
+            'console_role_sync' => $rolePull
+                ? 'ok'
+                : 'CONSOLE_API_TOKEN not set — roles re-checked with Console only at sign-in',
         ],
     ]);
 });
