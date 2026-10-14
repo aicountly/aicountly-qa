@@ -100,6 +100,7 @@ php spark db:seed RolesSeeder
 php spark db:seed OwnerSeeder            # prints initial owner password
 php spark db:seed BooksTestDataPackSeeder
 php spark db:seed BooksExpectedResultsSeeder
+php spark qa:repair-json [--apply]   # once after the 2026-10-14 deploy: rewrites JSON values an older release stored double-encoded
 php spark db:seed ValidationRulesSeeder
 php spark db:seed SettingsSeeder
 php -S 0.0.0.0:8080 -t . index.php       # local API server

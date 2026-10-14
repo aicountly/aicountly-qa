@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use CodeIgniter\Model;
-
-class AuditLogsModel extends Model
+class AuditLogsModel extends QaModel
 {
     protected $table         = 'qa_audit_logs';
     protected $primaryKey    = 'id';
@@ -18,5 +16,5 @@ class AuditLogsModel extends Model
         'ip_address', 'user_agent', 'metadata', 'created_at',
     ];
 
-    protected array $casts = ['metadata' => 'json-array'];
+    protected array $casts = ['metadata' => '?json-array'];
 }

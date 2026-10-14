@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use CodeIgniter\Model;
-
-class ExpectedResultsModel extends Model
+class ExpectedResultsModel extends QaModel
 {
     protected $table         = 'qa_expected_results';
     protected $primaryKey    = 'id';

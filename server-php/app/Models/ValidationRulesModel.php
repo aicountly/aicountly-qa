@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use CodeIgniter\Model;
-
-class ValidationRulesModel extends Model
+class ValidationRulesModel extends QaModel
 {
     protected $table         = 'qa_validation_rules';
     protected $primaryKey    = 'id';
