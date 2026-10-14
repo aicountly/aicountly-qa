@@ -197,11 +197,11 @@ final class ConsoleSsoFeatureTest extends CIUnitTestCase
         $token = self::json($this->login(['app_roles' => ['qa_manager']]))['data']['token'];
         $this->useConsole(StubConsoleTransport::down());
 
-        $this->db->query("UPDATE qa_users SET roles_synced_at = CURRENT_TIMESTAMP - INTERVAL '11 hours'");
+        $this->db->table('qa_users')->update(['roles_synced_at' => date('Y-m-d H:i:s', time() - 11 * 3600)]);
         $this->withBodyFormat('json')->post('v1/auth/refresh', ['token' => $token])->assertStatus(200);
         $this->assertSame(['qa_manager'], $this->localRoles());
 
-        $this->db->query("UPDATE qa_users SET roles_synced_at = CURRENT_TIMESTAMP - INTERVAL '13 hours'");
+        $this->db->table('qa_users')->update(['roles_synced_at' => date('Y-m-d H:i:s', time() - 13 * 3600)]);
         $r = $this->withBodyFormat('json')->post('v1/auth/refresh', ['token' => $token]);
         $r->assertStatus(401);
         $this->assertStringContainsString('more than 12 hours', self::json($r)['error']);
@@ -211,7 +211,7 @@ final class ConsoleSsoFeatureTest extends CIUnitTestCase
     public function testAuthenticatedRequestRechecksConsoleOnceRolesAreStale(): void
     {
         $token = self::json($this->login(['app_roles' => ['qa_manager']]))['data']['token'];
-        $this->db->query("UPDATE qa_users SET roles_synced_at = CURRENT_TIMESTAMP - INTERVAL '20 minutes'");
+        $this->db->table('qa_users')->update(['roles_synced_at' => date('Y-m-d H:i:s', time() - 20 * 60)]);
 
         $this->useConsole(StubConsoleTransport::ok(['exists' => true, 'active' => true, 'app_access' => true, 'app_roles' => ['developer_viewer']]));
         $r = $this->withHeaders(['Authorization' => 'Bearer ' . $token])->get('v1/me');
