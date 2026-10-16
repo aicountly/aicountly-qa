@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use CodeIgniter\Model;
-
-class TestDataPacksModel extends Model
+class TestDataPacksModel extends QaModel
 {
     protected $table         = 'qa_test_data_packs';
     protected $primaryKey    = 'id';

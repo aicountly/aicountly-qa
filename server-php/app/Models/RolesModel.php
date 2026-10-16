@@ -10,5 +10,5 @@ class RolesModel extends Model
     protected $primaryKey    = 'id';
     protected $returnType    = 'array';
     protected $useTimestamps = true;
-    protected $allowedFields = ['code', 'name', 'description'];
+    protected $allowedFields = ['code', 'slug', 'name', 'description'];
 }

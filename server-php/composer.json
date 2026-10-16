@@ -31,6 +31,9 @@
         "post-update-cmd": [
             "@composer dump-autoload"
         ],
+        "test": "phpunit",
+        "test:unit": "phpunit --testsuite unit",
+        "test:db": "phpunit --testsuite database",
         "migrate": "php spark migrate",
         "seed:roles": "php spark db:seed RolesSeeder",
         "seed:owner": "php spark db:seed OwnerSeeder",

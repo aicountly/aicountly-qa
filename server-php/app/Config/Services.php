@@ -12,6 +12,9 @@ use App\Services\Brain\Adapters\GeminiAdapter;
 use App\Services\Brain\Adapters\OpenAIAdapter;
 use App\Services\Brain\Adapters\PerplexityAdapter;
 use App\Services\Brain\BrainEnsemble;
+use App\Services\ConsoleAccess\ConsoleRoleSyncService;
+use App\Services\ConsoleAccess\ConsoleUserAccessClient;
+use App\Services\ConsoleAccess\DbUserRoleStore;
 use App\Services\ConsoleIdentityService;
 use App\Services\ReportService;
 use App\Services\SessionPlannerService;
@@ -82,6 +85,33 @@ class Services extends BaseService
             return static::getSharedInstance('consoleIdentity') ?? static::consoleIdentity(false);
         }
         return new ConsoleIdentityService();
+    }
+
+    /**
+     * Console-assigned roles: login sync, refresh pull and per-request re-check.
+     * QA_CONSOLE_RECHECK_MINUTES (default 15) bounds how stale local roles may get.
+     */
+    public static function consoleRoleSync(bool $getShared = true): ConsoleRoleSyncService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('consoleRoleSync') ?? static::consoleRoleSync(false);
+        }
+
+        $cache = null;
+        try {
+            $cache = static::cache();
+        } catch (\Throwable) {
+            $cache = null;
+        }
+
+        return new ConsoleRoleSyncService(
+            new DbUserRoleStore(),
+            new ConsoleUserAccessClient(),
+            null,
+            $cache,
+            null,
+            max(60, (int) env('QA_CONSOLE_RECHECK_MINUTES', 15) * 60),
+        );
     }
 
     public static function brain(bool $getShared = true): BrainEnsemble

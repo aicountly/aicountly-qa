@@ -192,6 +192,9 @@ jobs:
             --exclude='writable/uploads/*' \
             --exclude='writable/debugbar/*' \
             --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='build' \
+            --exclude='phpunit.xml.dist' \
             -e "$RSYNC_RSH" \
             server-php/ "$DEST"
 
@@ -213,6 +216,9 @@ jobs:
           "${SSH_CMD[@]}" "grep '^QA_DB_' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || true"
           echo "Console SSO keys (values masked):"
           "${SSH_CMD[@]}" "grep -E '^(CONSOLE_API_URL|CONTROLLER_APP_CODE)=' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || echo 'MISSING — add CONSOLE_API_URL and CONTROLLER_APP_CODE for SSO'"
+          if ! "${SSH_CMD[@]}" "grep -Eq '^CONSOLE_API_TOKEN=.+' \"${REMOTE_ROOT}/api/.env\""; then
+            echo "::warning::CONSOLE_API_TOKEN is not set in api/.env — QA roles are only re-checked with Console at sign-in, so a role removed in Console stays effective until the QA token expires (QA_JWT_TTL_MINUTES). Set it (Console per-product key with capability staff.roles)."
+          fi
           if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php check-env.php"; then
             echo "::error::api/.env on the server is missing or has empty QA_DB_* keys, or PostgreSQL is unreachable."
             echo "Edit ${REMOTE_ROOT}/api/.env on the server (not GitHub Secrets)."
@@ -438,3 +444,24 @@ jobs:
           export EXPECTED_ENTRY
           export VERIFY_SSH="ssh -i ${HOME}/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS} -o ConnectTimeout=20 ${PROD_SSH_USER}@${PROD_SSH_HOST}"
           bash scripts/ci/post-deploy-checks.sh production
+
+      # Console staff roles, live (scripts/ci/live-feature-checks.py; flow-react-app
+      # docs/GO_LIVE_VERIFICATION.md): health reports console role sync configured, the no-role
+      # account is refused, the staff account signs in with its Console roles and a refresh
+      # re-checks them; on request, the revocation drill. Signs the verification accounts in only.
+      - name: Live feature checks
+        env:
+          # Shared verification identities (org-level secrets; docs/GO_LIVE_VERIFICATION.md in flow-react-app).
+          VERIFY_CONSOLE_API: ${{ vars.VERIFY_CONSOLE_API }}
+          VERIFY_STAFF_EXPECTED_ROLES: ${{ vars.VERIFY_STAFF_EXPECTED_ROLES }}
+          VERIFY_IMAP_HOST: ${{ secrets.VERIFY_IMAP_HOST }}
+          VERIFY_IMAP_PORT: ${{ secrets.VERIFY_IMAP_PORT }}
+          VERIFY_IMAP_USER: ${{ secrets.VERIFY_IMAP_USER }}
+          VERIFY_IMAP_PASSWORD: ${{ secrets.VERIFY_IMAP_PASSWORD }}
+          VERIFY_STAFF_EMAIL: ${{ secrets.VERIFY_STAFF_EMAIL }}
+          VERIFY_STAFF_PASSWORD: ${{ secrets.VERIFY_STAFF_PASSWORD }}
+          VERIFY_NOROLE_EMAIL: ${{ secrets.VERIFY_NOROLE_EMAIL }}
+          VERIFY_NOROLE_PASSWORD: ${{ secrets.VERIFY_NOROLE_PASSWORD }}
+        run: |
+          export VERIFY_SSH="ssh -i ${HOME}/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS} -o ConnectTimeout=20 ${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          python3 scripts/ci/live-feature-checks.py production

@@ -53,22 +53,74 @@ rewritten in place by migration `2026-07-30-000025`. Full rules, including why
 you must never write `str_starts_with($env, 'production')`:
 [QA-ENVIRONMENTS.md](./QA-ENVIRONMENTS.md).
 
-## Roles (independent JWT auth)
+## Roles (assigned in Console)
 
-| Role               | Manage users / settings | Target profiles | Approve sessions | Run tests | View only |
-|--------------------|-------------------------|-----------------|------------------|-----------|-----------|
-| Owner              | ✓                       | ✓               | ✓                | ✓         | ✓         |
-| QA Manager         |                         | ✓               | ✓                | ✓         | ✓         |
-| Developer Viewer   |                         |                 |                  |           | reports + error register |
-| Auditor Viewer     |                         |                 |                  |           | final reports + audit logs |
+| Role (Console slug)                    | Manage users / settings | Target profiles | Approve sessions | Run tests | View only |
+|----------------------------------------|-------------------------|-----------------|------------------|-----------|-----------|
+| Owner (`owner`)                        | ✓                       | ✓               | ✓                | ✓         | ✓         |
+| QA Manager (`qa_manager`)              |                         | ✓               | ✓                | ✓         | ✓         |
+| Developer Viewer (`developer_viewer`)  |                         |                 |                  |           | reports + error register |
+| Auditor Viewer (`auditor_viewer`)      |                         |                 |                  |           | final reports + audit logs |
 
-Roles are enforced by `app/Filters/JwtFilter.php` + `app/Filters/RoleFilter.php`.
+**Console is the source of truth for QA roles** (Console → Roles & Access,
+https://console.aicountly.org, app code `qa`). QA keeps a local copy in
+`qa_user_roles` (matched on `qa_roles.slug`) only so that `RoleFilter` can
+enforce it; nothing in QA grants a role on its own any more.
+
+- **Sign-in** (`/v1/auth/sso-callback`, `/v1/auth/controller-sso`,
+  `/v1/auth/console-session`): when the Console payload carries `app_roles`, the
+  user's local roles are **replaced** with exactly those slugs (a Console
+  superadmin — `app_superadmin` / `global_superadmin` — gets every role,
+  including Owner). An empty `app_roles` for a non-superadmin is refused with
+  **403 "Access not assigned. Ask a Console superadmin to assign you a role."**
+  and any existing local sessions of that user are revoked. `console_user_id`,
+  `authz_version` and `roles_synced_at` are stored on `qa_users`.
+  If the payload has **no `app_roles` key** (an older Console still deployed),
+  existing local roles are kept and a user with none gets Developer Viewer;
+  only a superadmin can ever be seeded with Owner.
+- **Token refresh** (`POST /v1/auth/refresh`) and the **per-request re-check**
+  (`JwtFilter`, once `roles_synced_at` is older than
+  `QA_CONSOLE_RECHECK_MINUTES`, default 15) call
+  `GET {CONSOLE_API_URL}/portal/controller-apps/user-access?app_code=qa&console_user_id=…`
+  (or `&email=…`) with `Authorization: Bearer {CONSOLE_API_TOKEN}`:
+  - `exists:false`, `active:false` or `app_access:false` (or no roles) → refused
+    (403), local roles dropped and `sessions_revoked_at` set, so every token
+    issued before it is rejected (401) on its next request;
+  - otherwise local roles are replaced with `app_roles` and the request /
+    refreshed token uses them;
+  - Console unreachable (network error, non-2xx, unusable body): allowed only if
+    `roles_synced_at` is within the last **12 hours**, otherwise refused (401,
+    "Console could not be reached … sign in again"). Failures are cached for 60 s
+    so a Console outage does not add a timeout to every request.
+  - `CONSOLE_API_URL` or `CONSOLE_API_TOKEN` not set: a warning is logged on
+    refresh and roles are only taken from Console at sign-in (dev/test
+    behaviour). **Production must set both.**
+- `JwtFilter` attaches the user's *current* local roles to each request (not the
+  roles frozen in the token) and refuses inactive users immediately.
+- Optional cron sweep for idle users: `php spark qa:console-roles-sync`
+  (e.g. every 15 minutes).
+
+**Token lifetime and revocation lag.** QA issues a single bearer token
+(`QA_JWT_TTL_MINUTES`, default 720 = 12 h); there is no separate refresh token.
+With `CONSOLE_API_TOKEN` configured, a role change or revocation in Console takes
+effect on the user's next request after at most `QA_CONSOLE_RECHECK_MINUTES`
+(15 min), or sooner on refresh / the cron sweep. Without it, Console changes
+apply only at the next sign-in, i.e. up to the full token TTL.
+
+The Users API (`/v1/users`) still lists users and can deactivate them locally
+(`status`), but rejects any `roles` field with 403 "Roles are assigned in
+Console → Roles & Access (https://console.aicountly.org)."
+
+Roles are enforced by `app/Filters/JwtFilter.php` + `app/Filters/RoleFilter.php`;
+the sync logic lives in `app/Services/ConsoleAccess/`.
 
 ## Secrets
 
 Stored in env files only (never committed):
 
 - `QA_JWT_SECRET` — HS256 signing key (≥32 chars). Generate: `php -r "echo bin2hex(random_bytes(32));"`
+- `CONSOLE_API_URL` — Console API base (`https://console.aicountly.org/api`), used for SSO and the role pull.
+- `CONSOLE_API_TOKEN` — Console per-product key with capability `staff.roles`, bound to app `qa`. Required in production for refresh / periodic role re-checks (see Roles above).
 - `QA_VAULT_KEY`  — AES-256-GCM credential key (64 hex chars). Generate: `php -r "echo bin2hex(random_bytes(32));"`
 - `QA_WORKER_TOKEN` — long-lived shared secret used by the worker. Generate: `php -r "echo bin2hex(random_bytes(48));"`
 - Target app passwords are AES-256-GCM encrypted via `App\Libraries\Vault` before being persisted. The worker fetches them only at session start through `/api/v1/worker/credentials/{id}`.
