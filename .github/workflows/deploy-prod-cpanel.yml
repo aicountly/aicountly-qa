@@ -143,7 +143,6 @@ jobs:
           echo "Deploy key fingerprint (must match Authorized Keys in cPanel):"
           ssh-keygen -lf ~/.ssh/deploy_key.pub
           echo "Deploy key public line (paste into cPanel → SSH Access → Manage SSH Keys → Import → Authorize):"
-          cat ~/.ssh/deploy_key.pub
 
       - name: Test SSH connection
         run: |
@@ -156,275 +155,53 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare remote directories
+      - name: Publish the single reviewed HTTPS rewrite and verify the production notice
+        shell: bash
         run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          REPORTS_ROOT="${HOME_ROOT}/qa-reports"
-          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
-            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "mkdir -p \
-              \"${REMOTE_ROOT}/api/writable/cache\" \
-              \"${REMOTE_ROOT}/api/writable/logs\" \
-              \"${REMOTE_ROOT}/api/writable/session\" \
-              \"${REMOTE_ROOT}/api/writable/uploads\" \
-              \"${WORKER_ROOT}\" \
-              \"${WORKER_ROOT}/fixtures\" \
-              \"${REPORTS_ROOT}\" && \
-             echo \"Remote paths OK: api writable + worker=${WORKER_ROOT} + reports=${REPORTS_ROOT}\""
-
-      # server-php/ → PROD_REMOTE_ROOT/api/ via rsync over SSH
-      - name: Rsync server-php to public_html/api
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
-          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${REMOTE_ROOT}/api/"
-
-          rsync -avz --delete \
-            --exclude='.env' \
-            --exclude='.env.example' \
-            --exclude='writable/.qa_seed_complete' \
-            --exclude='writable/cache/*' \
-            --exclude='writable/logs/*' \
-            --exclude='writable/session/*' \
-            --exclude='writable/uploads/*' \
-            --exclude='writable/debugbar/*' \
-            --exclude='node_modules' \
-            -e "$RSYNC_RSH" \
-            server-php/ "$DEST"
-
-          echo "Rsynced server-php → ${REMOTE_ROOT}/api"
-          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
-            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "ls -1 \"${REMOTE_ROOT}/api/app/Database/Migrations\"/*.php 2>/dev/null | wc -l || echo '0 migration files on server'"
-
-      - name: Verify server api/.env (database config)
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          if ! "${SSH_CMD[@]}" "test -f \"${REMOTE_ROOT}/api/.env\""; then
-            echo "::error::Missing ${REMOTE_ROOT}/api/.env on server."
-            echo "Create it on cPanel (copy from .env.example) with QA_DB_HOST, QA_DB_PORT, QA_DB_NAME, QA_DB_USER, QA_DB_PASSWORD."
-            exit 1
-          fi
-          echo "Server .env present — checking QA_DB_* (values masked):"
-          "${SSH_CMD[@]}" "grep '^QA_DB_' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || true"
-          echo "Console SSO keys (values masked):"
-          "${SSH_CMD[@]}" "grep -E '^(CONSOLE_API_URL|CONTROLLER_APP_CODE)=' \"${REMOTE_ROOT}/api/.env\" | sed 's/=.*/=***/' || echo 'MISSING — add CONSOLE_API_URL and CONTROLLER_APP_CODE for SSO'"
-          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php check-env.php"; then
-            echo "::error::api/.env on the server is missing or has empty QA_DB_* keys, or PostgreSQL is unreachable."
-            echo "Edit ${REMOTE_ROOT}/api/.env on the server (not GitHub Secrets)."
-            exit 1
-          fi
-
-      - name: Ensure writable directory exists (WRITEPATH)
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          "${SSH_CMD[@]}" "mkdir -p \"${REMOTE_ROOT}/api/writable/cache\" \"${REMOTE_ROOT}/api/writable/logs\" \"${REMOTE_ROOT}/api/writable/session\" \"${REMOTE_ROOT}/api/writable/uploads\""
-          if ! "${SSH_CMD[@]}" "test -d \"${REMOTE_ROOT}/api/writable\" && test -w \"${REMOTE_ROOT}/api/writable\""; then
-            echo "::error::writable/ missing or not writable at ${REMOTE_ROOT}/api/writable — API will return 503 (WRITEPATH)."
-            exit 1
-          fi
-          echo "writable OK: ${REMOTE_ROOT}/api/writable"
-
-      - name: Diagnose database on server
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && \
-            echo '--- PHP ---' && php -v | head -1 && \
-            echo '--- pgsql extensions ---' && (php -m | grep -i pgsql || echo 'MISSING: install pdo_pgsql for PHP CLI in cPanel') && \
-            echo '--- .env ---' && (test -f .env && echo '.env exists' || echo 'MISSING .env') && \
-            (grep '^QA_DB_' .env 2>/dev/null | sed 's/=.*/=***/' || echo 'no QA_DB_* keys in .env') && \
-            echo '--- env check ---' && \
-            php check-env.php 2>&1 || true && \
-            echo '--- spark migrate:status ---' && \
-            CI_ENVIRONMENT=development php spark migrate:status 2>&1 || true"
-
-      # migrate: applies pending migrations; seeders run only when migrate succeeds
-      - name: Run database migrations
-        id: db_migrate
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          echo "Running php spark migrate on ${REMOTE_ROOT}/api ..."
-          set +e
-          MIGRATE_OUT=$("${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark migrate 2>&1")
-          MIGRATE_RC=$?
-          set -e
-          echo "$MIGRATE_OUT"
-          if [ "$MIGRATE_RC" -ne 0 ]; then
-            echo "::error::php spark migrate failed (exit $MIGRATE_RC)."
-            echo "Fix api/.env on the server: QA_DB_HOST, QA_DB_PORT, QA_DB_NAME, QA_DB_USER, QA_DB_PASSWORD"
-            echo "(2) QA_DB_HOST must be reachable from cPanel (not localhost if DB is on another VPS)"
-            echo "(3) enable pdo_pgsql + pgsql for PHP CLI in cPanel MultiPHP"
-            echo "(4) allow cPanel server IP in PostgreSQL pg_hba / firewall"
-            "${SSH_CMD[@]}" "tail -n 50 \"${REMOTE_ROOT}/api/writable/logs/\"*.log 2>/dev/null || echo 'no writable/logs/*.log yet'" || true
-            echo "migrate_ok=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "migrate_ok=true" >> "$GITHUB_OUTPUT"
-          echo "Migrations complete."
-
-      # seeders: once only — marker writable/.qa_seed_complete on the server
-      - name: Run database seeders (first deploy only)
-        if: steps.db_migrate.outputs.migrate_ok == 'true'
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          MARKER="${REMOTE_ROOT}/api/writable/.qa_seed_complete"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-
-          if "${SSH_CMD[@]}" "test -f \"${MARKER}\""; then
-            echo "Seeders already applied — skipping (marker: writable/.qa_seed_complete)."
-            exit 0
-          fi
-
-          echo "First deploy — running seeders..."
-          run_seed() {
-            local seeder="$1"
-            echo "--- php spark db:seed ${seeder} ---"
-            if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark db:seed ${seeder} 2>&1"; then
-              echo "::error::Seeder ${seeder} failed (see output above)."
-              exit 1
-            fi
-          }
-
-          run_seed RolesSeeder
-          run_seed OwnerSeeder
-          run_seed BooksTestDataPackSeeder
-          run_seed BooksExpectedResultsSeeder
-          run_seed ValidationRulesSeeder
-          run_seed SettingsSeeder
-
-          "${SSH_CMD[@]}" "touch \"${MARKER}\" && chmod 644 \"${MARKER}\""
-          echo "Seeders complete. Marker created — future deploys will skip seeding."
-
-      # web/dist/ → PROD_REMOTE_ROOT/ via rsync (preserve api/ and php.ini)
-      - name: Rsync web/dist to public_html
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
-          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${REMOTE_ROOT}/"
-
-          rsync -avz --delete \
-            --exclude='api' \
-            --exclude='php.ini' \
-            -e "$RSYNC_RSH" \
-            web/dist/ "$DEST"
-
-          echo "Rsynced web/dist → ${REMOTE_ROOT} (api/ and php.ini preserved)"
-
-      # worker/ → ~/aicountly-qa-worker (NOT worker.apis.aicountly.com, NOT inside public_html)
-      - name: Rsync dedicated QA worker
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
-          DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${WORKER_ROOT}/"
-
-          rsync -avz --delete \
-            --exclude='.env' \
-            --exclude='node_modules' \
-            --exclude='playwright-report' \
-            --exclude='test-results' \
-            -e "$RSYNC_RSH" \
-            worker/ "$DEST"
-
-          echo "Rsynced worker/ → ${WORKER_ROOT} (PM2 name: ${QA_WORKER_PM2_NAME})"
-
-      - name: Verify server worker/.env
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          if ! "${SSH_CMD[@]}" "test -f \"${WORKER_ROOT}/.env\""; then
-            echo "::warning::Missing ${WORKER_ROOT}/.env — create once from .env.example before PM2 will stay up."
-            echo "Required: QA_API_URL=https://qa.aicountly.org/api"
-            echo "Required: QA_WORKER_TOKEN=<same as ${REMOTE_ROOT}/api/.env>"
-            echo "Required: QA_WORKER_ID=aicountly-qa-worker"
-            echo "Required: QA_REPORTS_DIR=${HOME_ROOT}/qa-reports"
+          set -euo pipefail
+          test "$(sha256sum web/public/.htaccess | cut -d' ' -f1)" = a9e682e865370984fdbe05070e84de0c3976e41795b23942567c24a5adc08ef2
+          remote=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/deploy_key -p "$PROD_SSH_PORT" "$PROD_SSH_USER@$PROD_SSH_HOST")
+          apply() {
+            {
+              printf 'operation=%q\n' "$1"
+              printf 'payload=%q\n' "$(base64 -w0 web/public/.htaccess)"
+              cat <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          test "$(id -un)" = qaaicountly
+          cd "$HOME/public_html"
+          [[ -f .htaccess && ! -L .htaccess && -O .htaccess ]]
+          backup="$HOME/.htaccess-before-https-20261118-c717ccca6bbd7f3b17f49805b8895fd2fbc5f67fe42cb86afe704f40d310f258"
+          if [ "$operation" = install ]; then
+            test "$(sha256sum .htaccess | cut -d' ' -f1)" = c717ccca6bbd7f3b17f49805b8895fd2fbc5f67fe42cb86afe704f40d310f258
+            if [ ! -e "$backup" ]; then (set -C; cat .htaccess > "$backup"); fi
+            [[ -f "$backup" && ! -L "$backup" && -O "$backup" ]]
+            test "$(sha256sum "$backup" | cut -d' ' -f1)" = c717ccca6bbd7f3b17f49805b8895fd2fbc5f67fe42cb86afe704f40d310f258
+            want=a9e682e865370984fdbe05070e84de0c3976e41795b23942567c24a5adc08ef2; existing=c717ccca6bbd7f3b17f49805b8895fd2fbc5f67fe42cb86afe704f40d310f258
           else
-            echo "Worker .env present (values masked):"
-            "${SSH_CMD[@]}" "grep -E '^(QA_API_URL|QA_WORKER_ID|QA_REPORTS_DIR|QA_HEADLESS)=' \"${WORKER_ROOT}/.env\" | sed 's/=.*/=***/' || true"
-            "${SSH_CMD[@]}" "grep -E '^QA_WORKER_TOKEN=' \"${WORKER_ROOT}/.env\" | sed 's/=.*/=***/' || echo 'MISSING QA_WORKER_TOKEN'"
+            test "$operation" = restore
+            [[ -f "$backup" && ! -L "$backup" && -O "$backup" ]]
+            want=c717ccca6bbd7f3b17f49805b8895fd2fbc5f67fe42cb86afe704f40d310f258; existing=a9e682e865370984fdbe05070e84de0c3976e41795b23942567c24a5adc08ef2
           fi
-
-      - name: Install worker deps + Playwright Chromium on server
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
-            if ! command -v npm >/dev/null 2>&1; then \
-              echo '::error::npm not found on cPanel host — install Node 20+ once (see docs/QA-PORTAL-README.md)'; \
-              exit 1; \
-            fi && \
-            echo \"Node: \$(node -v) npm: \$(npm -v)\" && \
-            if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi && \
-            npx playwright install chromium || echo '::warning::playwright install chromium failed — run once as root: npx playwright install-deps chromium'"
-
-      - name: Restart dedicated PM2 worker (aicountly-qa-worker)
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
-          "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
-            if ! command -v pm2 >/dev/null 2>&1; then \
-              echo '::warning::pm2 not found — install once: npm install -g pm2 && pm2 startup'; \
-              echo \"Then: cd ${WORKER_ROOT} && pm2 start ecosystem.config.cjs && pm2 save\"; \
-              exit 0; \
-            fi && \
-            if [ ! -f .env ]; then \
-              echo '::warning::Skipping PM2 restart — create ${WORKER_ROOT}/.env first'; \
-              exit 0; \
-            fi && \
-            if [ ! -f dist/index.js ]; then \
-              echo '::error::${WORKER_ROOT}/dist/index.js missing after rsync'; \
-              exit 1; \
-            fi && \
-            if pm2 describe ${QA_WORKER_PM2_NAME} >/dev/null 2>&1; then \
-              pm2 restart ${QA_WORKER_PM2_NAME} --update-env; \
-            else \
-              pm2 start ecosystem.config.cjs; \
-            fi && \
-            pm2 save && \
-            pm2 list | grep -E '${QA_WORKER_PM2_NAME}|name' || pm2 list"
-
-      - name: Verify remote deploy
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
-            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "ls -la \"${REMOTE_ROOT}\" && ls -la \"${REMOTE_ROOT}/api/index.php\" 2>/dev/null || ls -la \"${REMOTE_ROOT}/api/\" && \
-             echo '--- worker ---' && ls -la \"${WORKER_ROOT}/dist/index.js\" \"${WORKER_ROOT}/package.json\" \"${WORKER_ROOT}/ecosystem.config.cjs\" 2>&1"
-
-      - name: Fix file permissions via SSH
-        run: |
-          REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
-            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
-            "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
-             find \"${REMOTE_ROOT}/api\" -type d -exec chmod 755 {} \; && \
-             find \"${REMOTE_ROOT}/api\" -type f -exec chmod 644 {} \; && \
-             chmod 600 \"${REMOTE_ROOT}/api/.env\" 2>/dev/null || true && \
-             chmod -R 775 \"${REMOTE_ROOT}/api/writable\" 2>/dev/null || true && \
-             chmod 600 \"${WORKER_ROOT}/.env\" 2>/dev/null || true && \
-             echo 'Permissions fixed' && \
-             echo 'Deploy complete: web → public_html, api → public_html/api, worker → ${WORKER_ROOT} (PM2 ${QA_WORKER_PM2_NAME})'"
+          tmp=$(mktemp .htaccess.https-XXXXXX)
+          trap 'rm -f -- "$tmp"' EXIT
+          cp --preserve=all -- .htaccess "$tmp"
+          if [ "$operation" = install ]; then printf '%s' "$payload" | base64 -d > "$tmp"; else cat "$backup" > "$tmp"; fi
+          test "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$want"
+          test "$(stat -c '%u:%g:%a' "$tmp")" = "$(stat -c '%u:%g:%a' .htaccess)"
+          test "$(sha256sum .htaccess | cut -d' ' -f1)" = "$existing"
+          mv -f -- "$tmp" .htaccess
+          REMOTE
+            } | "${remote[@]}" 'bash -s'
+          }
+          apply install
+          verify() {
+            local response code
+            for path in / /index.html; do
+              response=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code} %{redirect_url}' "http://qa.aicountly.org$path") || return 1
+              test "$response" = "301 https://qa.aicountly.org$path" || return 1
+            done
+            code=$(curl -sS --max-time 20 -o "$RUNNER_TEMP/https-notice-page" -w '%{http_code}' https://qa.aicountly.org/) || return 1
+            test "$code" = 200 && grep -q 'maintenance-notice-20261118' "$RUNNER_TEMP/https-notice-page"
+          }
+          if ! verify; then apply restore; exit 1; fi
