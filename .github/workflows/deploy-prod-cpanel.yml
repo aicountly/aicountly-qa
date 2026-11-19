@@ -1,4 +1,4 @@
-name: Deploy to cPanel via SSH (manual Production)
+name: Deploy to S01 via SSH (manual Production)
 
 # Manual-only. Trigger via Actions UI → Run workflow.
 # Secrets: PROD_SSH_HOST, PROD_SSH_PORT, PROD_SSH_USER, PROD_REMOTE_ROOT,
@@ -21,7 +21,6 @@ env:
   # PROD_REMOTE_ROOT → cPanel document root (e.g. /home/qaaicountly/public_html)
   PROD_REMOTE_ROOT: ${{ secrets.PROD_REMOTE_ROOT }}
   # Dedicated QA worker path (outside document root). Override with secret if needed.
-  PROD_WORKER_ROOT: ${{ secrets.PROD_WORKER_ROOT }}
   SSH_OPTS: -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o LogLevel=ERROR -o RequestTTY=no
   QA_WORKER_PM2_NAME: aicountly-qa-worker
 
@@ -35,6 +34,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Verify S01 deployment target
+        id: s01_target
+        env:
+          AIC_S01_TARGETS: '[{"domain":"qa.aicountly.org","account":"qaaicountly","root":"/home/qaaicountly/public_html","verified_blueprint":true,"ssh_login":"aicd5239a95993be6505"}]'
+          AIC_TARGET_PROD_REMOTE_ROOT: ${{ secrets.PROD_REMOTE_ROOT }}
+          AIC_TARGET_PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          AIC_TARGET_PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          AIC_TARGET_PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/s01-target-guard.py"
 
       - name: Setup Node (with cache)
         if: hashFiles('web/package-lock.json') != ''
@@ -145,7 +154,7 @@ jobs:
             exit 1
           fi
 
-          ssh-keyscan -p "${PROD_SSH_PORT}" "${PROD_SSH_HOST}" >> ~/.ssh/known_hosts
+          python3 "$GITHUB_WORKSPACE/.github/scripts/s01-keyscan.py" -p "${PROD_SSH_PORT}" "${PROD_SSH_HOST}" > ~/.ssh/known_hosts
           echo "SSH key loaded and validated"
           echo "Deploy key fingerprint (must match Authorized Keys in cPanel):"
           ssh-keygen -lf ~/.ssh/deploy_key.pub
@@ -166,10 +175,8 @@ jobs:
       - name: Prepare remote directories
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
-          REPORTS_ROOT="${HOME_ROOT}/qa-reports"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
+          REPORTS_ROOT="/home/qaaicountly/qa-reports"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
             "mkdir -p \
@@ -334,9 +341,7 @@ jobs:
       - name: Rsync dedicated QA worker
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           RSYNC_RSH="ssh -i ~/.ssh/deploy_key -p ${PROD_SSH_PORT} ${SSH_OPTS}"
           DEST="${PROD_SSH_USER}@${PROD_SSH_HOST}:${WORKER_ROOT}/"
 
@@ -353,16 +358,14 @@ jobs:
       - name: Verify server worker/.env
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           if ! "${SSH_CMD[@]}" "test -f \"${WORKER_ROOT}/.env\""; then
             echo "::warning::Missing ${WORKER_ROOT}/.env — create once from .env.example before PM2 will stay up."
             echo "Required: QA_API_URL=https://qa.aicountly.org/api"
             echo "Required: QA_WORKER_TOKEN=<same as ${REMOTE_ROOT}/api/.env>"
             echo "Required: QA_WORKER_ID=aicountly-qa-worker"
-            echo "Required: QA_REPORTS_DIR=${HOME_ROOT}/qa-reports"
+            echo "Required: QA_REPORTS_DIR=/home/qaaicountly/qa-reports"
           else
             echo "Worker .env present (values masked):"
             "${SSH_CMD[@]}" "grep -E '^(QA_API_URL|QA_WORKER_ID|QA_REPORTS_DIR|QA_HEADLESS)=' \"${WORKER_ROOT}/.env\" | sed 's/=.*/=***/' || true"
@@ -372,9 +375,7 @@ jobs:
       - name: Install worker deps + Playwright Chromium on server
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
             if ! command -v npm >/dev/null 2>&1; then \
@@ -386,11 +387,10 @@ jobs:
             npx playwright install chromium || echo '::warning::playwright install chromium failed — run once as root: npx playwright install-deps chromium'"
 
       - name: Restart dedicated PM2 worker (aicountly-qa-worker)
+        if: ${{ vars.S01_WEB_ONLY == '0' }}
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           "${SSH_CMD[@]}" "cd \"${WORKER_ROOT}\" && \
             if ! command -v pm2 >/dev/null 2>&1; then \
@@ -417,9 +417,7 @@ jobs:
       - name: Verify remote deploy
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
             "ls -la \"${REMOTE_ROOT}\" && ls -la \"${REMOTE_ROOT}/api/index.php\" 2>/dev/null || ls -la \"${REMOTE_ROOT}/api/\" && \
@@ -428,9 +426,7 @@ jobs:
       - name: Fix file permissions via SSH
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
-          HOME_ROOT="$(dirname "${REMOTE_ROOT}")"
-          WORKER_ROOT="${PROD_WORKER_ROOT:-${HOME_ROOT}/aicountly-qa-worker}"
-          WORKER_ROOT="${WORKER_ROOT%/}"
+          WORKER_ROOT="/home/qaaicountly/aicountly-qa-worker"
           ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} \
             "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
             "find \"${REMOTE_ROOT}\" -maxdepth 1 -type f -exec chmod 644 {} \; && \
