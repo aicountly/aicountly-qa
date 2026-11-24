@@ -233,7 +233,9 @@ jobs:
           if ! "${SSH_CMD[@]}" "grep -Eq '^CONSOLE_API_TOKEN=.+' \"${REMOTE_ROOT}/api/.env\""; then
             echo "::warning::CONSOLE_API_TOKEN is not set in api/.env — QA roles are only re-checked with Console at sign-in, so a role removed in Console stays effective until the QA token expires (QA_JWT_TTL_MINUTES). Set it (Console per-product key with capability staff.roles)."
           fi
-          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && php check-env.php"; then
+          # S01's deploy sandbox has no php on PATH: bin/ops/find-php.sh names the interpreter
+          # (PHP >= 8.1 with pgsql and pdo_pgsql) here and in every server-side php step below.
+          if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && PHP=\"\$(bash bin/ops/find-php.sh)\" && \"\$PHP\" check-env.php"; then
             echo "::error::api/.env on the server is missing or has empty QA_DB_* keys, or PostgreSQL is unreachable."
             echo "Edit ${REMOTE_ROOT}/api/.env on the server (not GitHub Secrets)."
             exit 1
@@ -254,15 +256,17 @@ jobs:
         run: |
           REMOTE_ROOT="${PROD_REMOTE_ROOT%/}"
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
+          # Diagnostics only: if find-php.sh finds nothing it says why, and bare php shows what is missing.
           "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && \
-            echo '--- PHP ---' && php -v | head -1 && \
-            echo '--- pgsql extensions ---' && (php -m | grep -i pgsql || echo 'MISSING: install pdo_pgsql for PHP CLI in cPanel') && \
+            { PHP=\"\$(bash bin/ops/find-php.sh)\" || PHP=php; } && \
+            echo \"--- PHP (\$PHP) ---\" && \"\$PHP\" -v | head -1 && \
+            echo '--- pgsql extensions ---' && (\"\$PHP\" -m | grep -i pgsql || echo 'MISSING: pgsql / pdo_pgsql for the PHP CLI') && \
             echo '--- .env ---' && (test -f .env && echo '.env exists' || echo 'MISSING .env') && \
             (grep '^QA_DB_' .env 2>/dev/null | sed 's/=.*/=***/' || echo 'no QA_DB_* keys in .env') && \
             echo '--- env check ---' && \
-            php check-env.php 2>&1 || true && \
+            \"\$PHP\" check-env.php 2>&1 || true && \
             echo '--- spark migrate:status ---' && \
-            CI_ENVIRONMENT=development php spark migrate:status 2>&1 || true"
+            CI_ENVIRONMENT=development \"\$PHP\" spark migrate:status 2>&1 || true"
 
       # migrate: applies pending migrations; seeders run only when migrate succeeds
       - name: Run database migrations
@@ -272,7 +276,7 @@ jobs:
           SSH_CMD=(ssh -i ~/.ssh/deploy_key -p "${PROD_SSH_PORT}" ${SSH_OPTS} "${PROD_SSH_USER}@${PROD_SSH_HOST}")
           echo "Running php spark migrate on ${REMOTE_ROOT}/api ..."
           set +e
-          MIGRATE_OUT=$("${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark migrate 2>&1")
+          MIGRATE_OUT=$("${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && PHP=\"\$(bash bin/ops/find-php.sh)\" && CI_ENVIRONMENT=development \"\$PHP\" spark migrate 2>&1")
           MIGRATE_RC=$?
           set -e
           echo "$MIGRATE_OUT"
@@ -306,7 +310,7 @@ jobs:
           run_seed() {
             local seeder="$1"
             echo "--- php spark db:seed ${seeder} ---"
-            if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && CI_ENVIRONMENT=development php spark db:seed ${seeder} 2>&1"; then
+            if ! "${SSH_CMD[@]}" "cd \"${REMOTE_ROOT}/api\" && PHP=\"\$(bash bin/ops/find-php.sh)\" && CI_ENVIRONMENT=development \"\$PHP\" spark db:seed ${seeder} 2>&1"; then
               echo "::error::Seeder ${seeder} failed (see output above)."
               exit 1
             fi
